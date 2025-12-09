@@ -1,0 +1,54 @@
+# Quad-Model Experiment: All 4 models collaborating
+# Maximum diversity collaboration
+# =====================================================
+
+experiment:
+  name: "quad_all_models"
+  description: "4-model collaboration with maximum diversity"
+  type: "multi_model"
+
+# All 4 models
+models:
+  m1:
+    name: "Qwen/Qwen2.5-3B-Instruct"
+    role: "qwen_older"
+  m2:
+    name: "Qwen/Qwen3-4B-Instruct-2507"
+    role: "qwen_newer"
+  m3:
+    name: "meta-llama/Llama-3.2-3B-Instruct"
+    role: "llama"
+  m4:
+    name: "ministral/Ministral-3b-instruct"
+    role: "mistral"
+
+collaboration:
+  num_models: 4
+  p_hint: 0.5
+  # With 4 models, use voting/ensemble for best trace selection
+  trace_selection: "best_correct"  # or "voting", "weighted"
+  max_context_tokens: 150  # Slightly longer for multi-model
+
+policy_optimization:
+  algorithm: "gspo_sapo_hybrid"
+  importance_sampling_level: "sequence"
+  K: 3  # Fewer traces per model (4 models * 3 = 12 total)
+  K_prime: 1
+  beta: 0.04
+  epsilon: 0.0003
+  tau_pos: 1.0
+  tau_neg: 1.05
+
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.3  # Higher exploration with more models
+  w_cross_e1: 0.1  # Cross-model from start
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.1
+  w_cross_e2: 0.2
+
+training:
+  num_epochs: 2
+  batch_size: 2  # Lower batch size for 4 models
+  gradient_accumulation_steps: 8
+  learning_rate: 8.0e-6  # Slightly lower LR

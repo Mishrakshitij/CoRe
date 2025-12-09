@@ -1,0 +1,71 @@
+# All Pairwise Model Combinations
+# ================================
+# This file defines all 6 unique model pairs for experimentation
+
+pairs:
+  # Pair 1: Qwen2.5-3B + Qwen3-4B (Same family)
+  pair_1:
+    name: "qwen2.5_qwen3"
+    m1: "Qwen/Qwen2.5-3B-Instruct"
+    m2: "Qwen/Qwen3-4B-Instruct-2507"
+    family: "same"
+    notes: "Same family, different generations"
+
+  # Pair 2: Qwen2.5-3B + Llama-3.2-3B (Cross family)
+  pair_2:
+    name: "qwen2.5_llama3.2"
+    m1: "Qwen/Qwen2.5-3B-Instruct"
+    m2: "meta-llama/Llama-3.2-3B-Instruct"
+    family: "cross"
+    notes: "Qwen vs Llama architecture"
+
+  # Pair 3: Qwen2.5-3B + Ministral-3B (Cross family)
+  pair_3:
+    name: "qwen2.5_ministral"
+    m1: "Qwen/Qwen2.5-3B-Instruct"
+    m2: "ministral/Ministral-3b-instruct"
+    family: "cross"
+    notes: "Qwen vs Mistral architecture"
+
+  # Pair 4: Qwen3-4B + Llama-3.2-3B (Cross family)
+  pair_4:
+    name: "qwen3_llama3.2"
+    m1: "Qwen/Qwen3-4B-Instruct-2507"
+    m2: "meta-llama/Llama-3.2-3B-Instruct"
+    family: "cross"
+    notes: "Latest Qwen vs Llama"
+
+  # Pair 5: Qwen3-4B + Ministral-3B (Cross family)
+  pair_5:
+    name: "qwen3_ministral"
+    m1: "Qwen/Qwen3-4B-Instruct-2507"
+    m2: "ministral/Ministral-3b-instruct"
+    family: "cross"
+    notes: "Latest Qwen vs Mistral"
+
+  # Pair 6: Llama-3.2-3B + Ministral-3B (Cross family)
+  pair_6:
+    name: "llama3.2_ministral"
+    m1: "meta-llama/Llama-3.2-3B-Instruct"
+    m2: "ministral/Ministral-3b-instruct"
+    family: "cross"
+    notes: "Llama vs Mistral architecture"
+
+# Recommended configurations per pair type
+config_same_family:
+  policy_optimization:
+    algorithm: "gspo"
+    importance_sampling_level: "sequence"
+    beta: 0.0
+  rewards:
+    w_explore_e1: 0.15
+    w_cross_e1: 0.0
+
+config_cross_family:
+  policy_optimization:
+    algorithm: "gspo_sapo_hybrid"
+    importance_sampling_level: "sequence"
+    beta: 0.04
+  rewards:
+    w_explore_e1: 0.25
+    w_cross_e1: 0.05

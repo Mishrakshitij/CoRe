@@ -1,0 +1,41 @@
+# Pairwise Experiment: Qwen2.5-3B + Qwen3-4B
+# Same-family collaboration experiment
+# =====================================================
+
+experiment:
+  name: "pairwise_qwen2.5_qwen3"
+  description: "Same-family collaboration between Qwen models"
+  type: "pairwise"
+
+# Override models
+models:
+  m1:
+    name: "Qwen/Qwen2.5-3B-Instruct"
+    role: "primary"
+  m2:
+    name: "Qwen/Qwen3-4B-Instruct-2507"
+    role: "secondary"
+
+# GSPO is native to Qwen3, so pure GSPO may work well
+policy_optimization:
+  algorithm: "gspo"
+  importance_sampling_level: "sequence"
+  K: 4
+  K_prime: 2
+  beta: 0.0  # Qwen GSPO uses beta=0
+  epsilon: 0.0003
+  epsilon_high: 0.0004
+
+# Same family may need less exploration diversity
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.15
+  w_cross_e1: 0.0  # Start with no cross reward (similar strategies)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.03
+  w_cross_e2: 0.05  # Small cross reward in epoch 2
+
+training:
+  num_epochs: 2
+  batch_size: 4
+  learning_rate: 1.0e-5
