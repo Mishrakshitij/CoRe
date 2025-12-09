@@ -1,0 +1,42 @@
+# Pairwise Experiment: Qwen2.5-3B + Llama-3.2-3B
+# Cross-family collaboration experiment
+# =====================================================
+
+experiment:
+  name: "pairwise_qwen2.5_llama3.2"
+  description: "Cross-family collaboration between Qwen and Llama models"
+  type: "pairwise"
+
+# Override models
+models:
+  m1:
+    name: "Qwen/Qwen2.5-3B-Instruct"
+    role: "primary"
+  m2:
+    name: "meta-llama/Llama-3.2-3B-Instruct"
+    role: "secondary"
+
+# Use GSPO-SAPO hybrid for cross-family (more stable)
+policy_optimization:
+  algorithm: "gspo_sapo_hybrid"
+  importance_sampling_level: "sequence"
+  K: 4
+  K_prime: 2
+  beta: 0.04
+  epsilon: 0.0003
+  tau_pos: 1.0
+  tau_neg: 1.05
+
+# Cross-family may benefit from higher cross reward
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.25  # Slightly higher exploration for diverse models
+  w_cross_e1: 0.05
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.15  # Higher cross-model synergy in epoch 2
+
+training:
+  num_epochs: 2
+  batch_size: 4
+  learning_rate: 1.0e-5

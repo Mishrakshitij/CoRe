@@ -1,0 +1,184 @@
+# Base Configuration for Collaborative Reasoning with GRPO/GSPO/SAPO
+# =====================================================================
+
+project:
+  name: "collab_reasoning"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations
+models:
+  available:
+    qwen2_5_3b:
+      name: "Qwen/Qwen2.5-3B-Instruct"
+      type: "qwen"
+      size: "3B"
+    qwen3_4b:
+      name: "Qwen/Qwen3-4B-Instruct-2507"
+      type: "qwen"
+      size: "4B"
+    llama3_2_3b:
+      name: "meta-llama/Llama-3.2-3B-Instruct"
+      type: "llama"
+      size: "3B"
+    ministral_3b:
+      name: "ministral/Ministral-3b-instruct"
+      type: "mistral"
+      size: "3B"
+
+# Default training configuration
+training:
+  # Data
+  dataset: "gsm8k"  # gsm8k, math, combined
+  num_samples: 7500
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+  # Epochs
+  num_epochs: 2
+
+  # Batch settings
+  batch_size: 4
+  gradient_accumulation_steps: 4
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # LoRA settings
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 500
+  eval_steps: 250
+  logging_steps: 50
+
+# GRPO/GSPO/SAPO specific settings
+policy_optimization:
+  # Algorithm selection: grpo, gspo, sapo, gspo_sapo_hybrid
+  algorithm: "gspo_sapo_hybrid"
+
+  # Importance sampling level: token, sequence, sequence_token
+  importance_sampling_level: "sequence"
+
+  # Loss type: grpo, bnpo, dr_grpo
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 4  # Cold generation traces
+  K_prime: 2  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # Clipping (GRPO/GSPO)
+  epsilon: 0.0003  # 3e-4 for GSPO
+  epsilon_high: 0.0004  # 4e-4 for GSPO
+
+  # SAPO temperatures
+  tau_pos: 1.0
+  tau_neg: 1.05
+  tau_rescue: 0.8  # Lower tau for rescued traces
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2 (annealed)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15  # Margin for DPP-lite
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+# Collaboration settings
+collaboration:
+  # Number of models (2 for pairwise, 3-4 for multi)
+  num_models: 2
+
+  # Hint dropout probability
+  p_hint: 0.5
+
+  # Context compression
+  max_context_tokens: 120
+  include_answer_in_context: false
+
+  # Buddy buffer
+  max_buffer_size: 1000
+  distillation_batch_size: 8
+  distillation_frequency: 50  # Every N steps
+
+  # Micro-round settings
+  micro_round_b_exploit_boost: 0.95  # Higher exploitation in round B
+
+# Distance/Similarity metrics
+distance:
+  # Type: embedding, structural, ngram, hybrid
+  type: "hybrid"
+
+  # Embedding model for semantic similarity
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # Structural extraction
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+
+  # N-gram settings
+  ngram_n: 3
+
+# Generation settings
+generation:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Counterfactual regularization
+counterfactual:
+  enabled: true
+  probability: 0.2
+  lambda_cf: 0.3
+  perturbation_types: ["numeric", "condition"]
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 8
+  generate_traces_for_eval: true
