@@ -138,12 +138,15 @@ class BasePolicyLoss(ABC, nn.Module):
         # Asymmetric clipping based on advantage sign
         clip_high = torch.where(
             advantages > 0,
-            torch.tensor(1.0 + self.epsilon_high, device=ratio.device),
-            torch.tensor(1.0 + self.epsilon, device=ratio.device),
+            torch.tensor(1.0 + self.epsilon_high, device=ratio.device, dtype=ratio.dtype),
+            torch.tensor(1.0 + self.epsilon, device=ratio.device, dtype=ratio.dtype),
         )
-        clip_low = 1.0 - self.epsilon
+        clip_low = torch.tensor(1.0 - self.epsilon, device=ratio.device, dtype=ratio.dtype)
 
-        return torch.clamp(ratio, clip_low, clip_high)
+        # Use min/max operations for element-wise clipping with tensor bounds
+        clipped = torch.max(ratio, clip_low)
+        clipped = torch.min(clipped, clip_high)
+        return clipped
 
     def forward(
         self,
@@ -152,6 +155,7 @@ class BasePolicyLoss(ABC, nn.Module):
         ref_log_probs: torch.Tensor,
         advantages: torch.Tensor,
         mask: torch.Tensor,
+        is_rescue: Optional[torch.Tensor] = None,
     ) -> LossOutput:
         """Forward pass - calls compute_loss."""
         return self.compute_loss(log_probs, old_log_probs, ref_log_probs, advantages, mask)
