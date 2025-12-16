@@ -89,9 +89,12 @@ class GSPOLoss(BasePolicyLoss):
             torch.full_like(ratio, 1.0 + self.epsilon_high),
             torch.full_like(ratio, 1.0 + self.epsilon),
         )
-        clip_low = 1.0 - self.epsilon
+        clip_low = torch.full_like(ratio, 1.0 - self.epsilon)
 
-        return torch.clamp(ratio, clip_low, clip_high)
+        # Use min/max operations for element-wise clipping with tensor bounds
+        clipped = torch.max(ratio, clip_low)
+        clipped = torch.min(clipped, clip_high)
+        return clipped
 
     def compute_loss(
         self,

@@ -14,7 +14,7 @@ from .grpo_loss import GRPOLoss
 from .gspo_loss import GSPOLoss
 from .sapo_loss import SAPOLoss
 from .hybrid_loss import GSPOSAPOHybridLoss
-from .base_loss import BasePolicyLoss
+from .base_loss import BasePolicyLoss, LossOutput
 
 __all__ = [
     "GRPOLoss",
@@ -22,6 +22,7 @@ __all__ = [
     "SAPOLoss",
     "GSPOSAPOHybridLoss",
     "BasePolicyLoss",
+    "LossOutput",
 ]
 
 
