@@ -1,14 +1,15 @@
-# Base Configuration for Collaborative Reasoning with GRPO/GSPO/SAPO
-# =====================================================================
+# Full GRPO Training on GSM8K (~7500 samples)
+# =============================================
+# Optimized for 2x A6000 GPUs (48GB each)
 
 project:
-  name: "collab_reasoning"
+  name: "collab_reasoning_grpo"
   seed: 42
   output_dir: "./outputs"
   log_dir: "./logs"
   cache_dir: "./cache"
 
-# Model configurations
+# Model configurations - same as base_config
 models:
   available:
     qwen2_5_3b:
@@ -23,26 +24,21 @@ models:
       name: "meta-llama/Llama-3.2-3B-Instruct"
       type: "llama"
       size: "3B"
-    ministral_3b:
-      name: "ministral/Ministral-3b-instruct"
-      type: "mistral"
-      size: "3B"
 
-# Default training configuration
 training:
-  # Data
-  dataset: "gsm8k"  # gsm8k, math, combined
+  # Full GSM8K dataset
+  dataset: "gsm8k"
   num_samples: 7500
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
+  train_split: 0.8    # 6000 for training
+  val_split: 0.1      # 750 for validation
+  test_split: 0.1     # 750 for testing
 
-  # Epochs
+  # Training epochs
   num_epochs: 2
 
-  # Batch settings
+  # Batch settings - optimized for memory
   batch_size: 2
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 4  # Effective batch size = 8
 
   # Optimizer
   learning_rate: 1.0e-5
@@ -69,32 +65,23 @@ training:
   eval_steps: 250
   logging_steps: 50
 
-# GRPO/GSPO/SAPO specific settings
+# GRPO algorithm configuration
 policy_optimization:
-  # Algorithm selection: grpo, gspo, sapo, gspo_sapo_hybrid
-  algorithm: "gspo_sapo_hybrid"
+  algorithm: "grpo"
 
-  # Importance sampling level: token, sequence, sequence_token
-  importance_sampling_level: "sequence"
-
-  # Loss type: grpo, bnpo, dr_grpo
+  # Importance sampling at token level for GRPO
+  importance_sampling_level: "token"
   loss_type: "grpo"
 
   # Number of traces per question
-  K: 2  # Cold generation traces
+  K: 2        # Cold generation traces
   K_prime: 1  # Contexted generation traces
 
   # KL regularization
   beta: 0.04
 
-  # Clipping (GRPO/GSPO)
-  epsilon: 0.0003  # 3e-4 for GSPO
-  epsilon_high: 0.0004  # 4e-4 for GSPO
-
-  # SAPO temperatures
-  tau_pos: 1.0
-  tau_neg: 1.05
-  tau_rescue: 0.8  # Lower tau for rescued traces
+  # GRPO clipping (standard epsilon)
+  epsilon: 0.2
 
   # Off-policy settings
   steps_per_generation: 4
@@ -102,12 +89,12 @@ policy_optimization:
 
 # Reward configuration
 rewards:
-  # Weights - Epoch 1
+  # Weights - Epoch 1 (explore more)
   w_exploit_e1: 1.0
   w_explore_e1: 0.2
   w_cross_e1: 0.0
 
-  # Weights - Epoch 2 (annealed)
+  # Weights - Epoch 2 (exploit more)
   w_exploit_e2: 1.0
   w_explore_e2: 0.05
   w_cross_e2: 0.1
@@ -117,7 +104,7 @@ rewards:
   partial_thresh: 0.5
 
   # Exploration diversity
-  delta: 0.15  # Margin for DPP-lite
+  delta: 0.15
 
   # Cross-model complementarity
   eta: 0.1
@@ -127,38 +114,22 @@ rewards:
 
 # Collaboration settings
 collaboration:
-  # Number of models (2 for pairwise, 3-4 for multi)
   num_models: 2
-
-  # Hint dropout probability
   p_hint: 0.5
-
-  # Context compression
   max_context_tokens: 120
   include_answer_in_context: false
-
-  # Buddy buffer
   max_buffer_size: 1000
   distillation_batch_size: 8
-  distillation_frequency: 50  # Every N steps
-
-  # Micro-round settings
-  micro_round_b_exploit_boost: 0.95  # Higher exploitation in round B
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
 
 # Distance/Similarity metrics
 distance:
-  # Type: embedding, structural, ngram, hybrid
   type: "hybrid"
-
-  # Embedding model for semantic similarity
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-
-  # Structural extraction
   extract_operations: true
   operation_weight: 0.4
   embedding_weight: 0.6
-
-  # N-gram settings
   ngram_n: 3
 
 # Generation settings
@@ -170,26 +141,13 @@ generation:
   do_sample: true
   num_return_sequences: 1
 
-# Prompting settings
+# Prompting - standard prompts (not multi-strategy)
 prompting:
-  # Enable multi-strategy exploration format
-  multi_strategy: true  # Set to true to use XML multi-strategy prompts
-
-  # Multi-strategy reward weights (only used when multi_strategy=true)
-  ms_w_correct: 2.0      # Correctness weight
-  ms_w_diversity: 0.5    # Semantic diversity weight
-  ms_w_consistency: 1.5  # Outcome consistency weight
-  ms_w_format: 0.3       # Format adherence weight
-
-  # Diversity threshold for counting unique strategies
-  diversity_threshold: 0.8
+  multi_strategy: false
 
 # Counterfactual regularization
 counterfactual:
-  enabled: true
-  probability: 0.2
-  lambda_cf: 0.3
-  perturbation_types: ["numeric", "condition"]
+  enabled: false  # Disabled for faster training
 
 # Evaluation
 evaluation:

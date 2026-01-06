@@ -192,17 +192,21 @@ def compare_answers(pred: str, gold: str, tolerance: float = 1e-5) -> bool:
     return False
 
 
-def format_prompt(question: str, few_shot: List[Dict] = None) -> str:
+def format_prompt(question: str, few_shot: List[Dict] = None, multi_strategy: bool = False) -> str:
     """
     Format a question into a prompt for the model.
 
     Args:
         question: The question to solve
         few_shot: Optional few-shot examples
+        multi_strategy: If True, use multi-strategy exploration format
 
     Returns:
         Formatted prompt
     """
+    if multi_strategy:
+        return format_multi_strategy_prompt(question)
+
     prompt_parts = []
 
     # System instruction
@@ -226,3 +230,166 @@ def format_prompt(question: str, few_shot: List[Dict] = None) -> str:
     prompt_parts.append("\nLet's solve this step by step:")
 
     return "\n".join(prompt_parts)
+
+
+# Multi-strategy prompt template for GSM8K
+GSM8K_MULTI_STRATEGY_PROMPT = """You are an expert mathematical problem solver. For grade-school math problems, explore multiple distinct solution strategies before arriving at your final answer.
+
+IMPORTANT: Show your work clearly and provide a numerical final answer.
+
+Format your response as:
+<strategy id="1">
+<approach>Brief name of approach (e.g., "Work Backwards", "Unit Rate", "Algebra")</approach>
+<reasoning>
+Step-by-step solution using this approach
+</reasoning>
+<result>
+Numerical answer from this approach
+</result>
+</strategy>
+
+<strategy id="2">
+<approach>Alternative approach name</approach>
+<reasoning>
+Step-by-step solution using the alternative approach
+</reasoning>
+<result>
+Numerical answer from this approach
+</result>
+</strategy>
+
+<final_answer>
+Your final numerical answer
+</final_answer>
+
+Question: {question}
+
+Solve using at least 2 different approaches:"""
+
+
+def format_multi_strategy_prompt(question: str) -> str:
+    """
+    Format a question using multi-strategy exploration prompt.
+
+    Args:
+        question: The question to solve
+
+    Returns:
+        Multi-strategy formatted prompt
+    """
+    return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
+
+
+def format_multi_strategy_contexted_prompt(question: str, teacher_context: str) -> str:
+    """
+    Format a contexted prompt with multi-strategy format and teacher hint.
+
+    Args:
+        question: The question to solve
+        teacher_context: Compressed hint from successful peer model
+
+    Returns:
+        Multi-strategy contexted prompt
+    """
+    return f"""You are an expert mathematical problem solver. A peer model provided this helpful approach:
+
+<peer_hint>
+{teacher_context}
+</peer_hint>
+
+Now solve the problem using the hint AND explore an alternative strategy:
+
+Format your response as:
+<strategy id="1">
+<approach>Approach inspired by peer hint</approach>
+<reasoning>
+Step-by-step solution using the hint
+</reasoning>
+<result>
+Numerical answer from this approach
+</result>
+</strategy>
+
+<strategy id="2">
+<approach>Your own alternative approach</approach>
+<reasoning>
+Step-by-step solution using a different method
+</reasoning>
+<result>
+Numerical answer from this approach
+</result>
+</strategy>
+
+<final_answer>
+Your final numerical answer
+</final_answer>
+
+Question: {question}
+
+Solve using the hint and an alternative approach:"""
+
+
+def extract_xml_answer(text: str) -> Optional[str]:
+    """
+    Extract final answer from XML-formatted multi-strategy response.
+
+    Args:
+        text: Model response text
+
+    Returns:
+        Extracted answer or None
+    """
+    # Try to extract from <final_answer> tag
+    final_match = re.search(r'<final_answer>\s*(.*?)\s*</final_answer>', text, re.DOTALL)
+    if final_match:
+        answer = final_match.group(1).strip()
+        # Extract number from the answer
+        numbers = re.findall(r'-?\d+\.?\d*', answer)
+        if numbers:
+            return numbers[-1]
+        return answer
+
+    # Fallback: try to get from last <result> tag
+    results = re.findall(r'<result>\s*(.*?)\s*</result>', text, re.DOTALL)
+    if results:
+        answer = results[-1].strip()
+        numbers = re.findall(r'-?\d+\.?\d*', answer)
+        if numbers:
+            return numbers[-1]
+        return answer
+
+    # Final fallback to standard extraction
+    return extract_answer(text)
+
+
+def extract_strategy_blocks(text: str) -> List[Dict]:
+    """
+    Extract all strategy blocks from multi-strategy response.
+
+    Args:
+        text: Model response text
+
+    Returns:
+        List of dicts with 'approach', 'reasoning', 'result' keys
+    """
+    strategies = []
+
+    # Find all strategy blocks
+    pattern = r'<strategy\s+id="(\d+)">\s*' \
+              r'<approach>(.*?)</approach>\s*' \
+              r'<reasoning>(.*?)</reasoning>\s*' \
+              r'<result>\s*(.*?)\s*</result>\s*' \
+              r'</strategy>'
+
+    matches = re.findall(pattern, text, re.DOTALL)
+
+    for match in matches:
+        strategy_id, approach, reasoning, result = match
+        strategies.append({
+            'id': int(strategy_id),
+            'approach': approach.strip(),
+            'reasoning': reasoning.strip(),
+            'result': result.strip(),
+        })
+
+    return strategies

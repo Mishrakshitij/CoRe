@@ -5,12 +5,20 @@ Micro-Round Manager
 Manages the two-phase generation process:
 - Micro-round A: Cold generation (no context)
 - Micro-round B: Contexted generation (with teacher hint)
+
+Supports both standard and multi-strategy prompting modes.
 """
 
 import random
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import re
+
+from ..data.preprocessing import (
+    format_prompt,
+    format_multi_strategy_prompt,
+    format_multi_strategy_contexted_prompt,
+)
 
 
 @dataclass
@@ -82,6 +90,10 @@ class MicroRoundManager:
         self.round_b_exploit_boost = config["collaboration"].get(
             "micro_round_b_exploit_boost", 0.95
         )
+
+        # Multi-strategy prompting
+        prompting_config = config.get("prompting", {})
+        self.multi_strategy = prompting_config.get("multi_strategy", False)
 
     def compress_trace(
         self,
@@ -195,14 +207,32 @@ class MicroRoundManager:
         question: str,
         teacher_context: str,
     ) -> str:
-        """Format prompt with teacher context for Micro-round B."""
-        return f"""Here's a helpful reasoning approach:
+        """
+        Format prompt with teacher context for Micro-round B.
+
+        Uses multi-strategy format if enabled.
+        """
+        if self.multi_strategy:
+            return format_multi_strategy_contexted_prompt(question, teacher_context)
+        else:
+            return f"""Here's a helpful reasoning approach:
 {teacher_context}
 
 Now solve the following problem using a similar approach:
 Question: {question}
 
 Let's solve this step by step:"""
+
+    def format_cold_prompt(self, question: str) -> str:
+        """
+        Format prompt for cold generation (Micro-round A).
+
+        Uses multi-strategy format if enabled.
+        """
+        if self.multi_strategy:
+            return format_multi_strategy_prompt(question)
+        else:
+            return format_prompt(question)
 
     def process_round_a(
         self,

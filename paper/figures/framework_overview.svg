@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#27ae60"/>
+    </marker>
+    <marker id="arrowhead-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#e74c3c"/>
+    </marker>
+    <linearGradient id="grad-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3498db;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#9b59b6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8e44ad;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad-green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#27ae60;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e8449;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f39c12;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d68910;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="500" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="400" y="35" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#2c3e50">
+    Collaborative Reasoning (CoRe) Framework
+  </text>
+
+  <!-- Problem Input -->
+  <rect x="30" y="200" width="100" height="60" rx="8" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2"/>
+  <text x="80" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#2c3e50">Problem</text>
+  <text x="80" y="245" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#7f8c8d">x</text>
+
+  <!-- Arrow to models -->
+  <line x1="130" y1="230" x2="170" y2="150" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="130" y1="230" x2="170" y2="310" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Round A Section -->
+  <rect x="160" y="60" width="280" height="180" rx="10" fill="none" stroke="#3498db" stroke-width="2" stroke-dasharray="5,5"/>
+  <text x="300" y="85" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#3498db">Round A: Cold Generation</text>
+
+  <!-- Model M1 -->
+  <rect x="180" y="100" width="100" height="50" rx="8" fill="url(#grad-blue)" stroke="#2980b9" stroke-width="2"/>
+  <text x="230" y="130" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">M₁</text>
+
+  <!-- Model M2 -->
+  <rect x="180" y="170" width="100" height="50" rx="8" fill="url(#grad-purple)" stroke="#8e44ad" stroke-width="2"/>
+  <text x="230" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">M₂</text>
+
+  <!-- K traces arrows -->
+  <line x1="280" y1="125" x2="320" y2="125" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="280" y1="195" x2="320" y2="195" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="300" y="115" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#7f8c8d">K traces</text>
+  <text x="300" y="185" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#7f8c8d">K traces</text>
+
+  <!-- M1 Output (Failed) -->
+  <rect x="330" y="100" width="90" height="50" rx="8" fill="#fadbd8" stroke="#e74c3c" stroke-width="2"/>
+  <text x="375" y="122" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#c0392b">y₁: ✗</text>
+  <text x="375" y="138" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#e74c3c">Failed</text>
+
+  <!-- M2 Output (Success) -->
+  <rect x="330" y="170" width="90" height="50" rx="8" fill="#d5f5e3" stroke="#27ae60" stroke-width="2"/>
+  <text x="375" y="192" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#1e8449">y₂: ✓</text>
+  <text x="375" y="208" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#27ae60">Success</text>
+
+  <!-- Round B Section -->
+  <rect x="160" y="260" width="280" height="180" rx="10" fill="none" stroke="#f39c12" stroke-width="2" stroke-dasharray="5,5"/>
+  <text x="300" y="285" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#f39c12">Round B: Contexted Generation</text>
+
+  <!-- Hint Construction -->
+  <rect x="180" y="300" width="100" height="50" rx="8" fill="url(#grad-orange)" stroke="#d68910" stroke-width="2"/>
+  <text x="230" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Hint</text>
+  <text x="230" y="338" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">h₂→₁</text>
+
+  <!-- Arrow from M2 success to Hint -->
+  <path d="M 375 220 Q 375 260, 280 300" fill="none" stroke="#27ae60" stroke-width="2" marker-end="url(#arrowhead-green)"/>
+  <text x="340" y="265" font-family="Arial, sans-serif" font-size="9" fill="#27ae60">Extract hint</text>
+
+  <!-- M1 Rescue -->
+  <rect x="180" y="370" width="100" height="50" rx="8" fill="url(#grad-blue)" stroke="#2980b9" stroke-width="2"/>
+  <text x="230" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">M₁</text>
+  <text x="230" y="408" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white">+ hint</text>
+
+  <!-- Arrow hint to M1 -->
+  <line x1="230" y1="350" x2="230" y2="365" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- K' traces arrow -->
+  <line x1="280" y1="395" x2="320" y2="395" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="300" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#7f8c8d">K' traces</text>
+
+  <!-- Rescue Output -->
+  <rect x="330" y="370" width="90" height="50" rx="8" fill="url(#grad-green)" stroke="#1e8449" stroke-width="2"/>
+  <text x="375" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">ỹ₁: ✓</text>
+  <text x="375" y="408" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white">Rescued!</text>
+
+  <!-- Policy Optimization Section -->
+  <rect x="480" y="100" width="280" height="350" rx="10" fill="none" stroke="#9b59b6" stroke-width="2" stroke-dasharray="5,5"/>
+  <text x="620" y="125" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#9b59b6">Policy Optimization</text>
+
+  <!-- Arrows to optimization -->
+  <line x1="420" y1="125" x2="490" y2="180" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="420" y1="195" x2="490" y2="210" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="420" y1="395" x2="490" y2="350" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Reward Components -->
+  <rect x="500" y="150" width="120" height="40" rx="5" fill="#e8f6f3" stroke="#1abc9c" stroke-width="1"/>
+  <text x="560" y="175" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#16a085">R_exploit</text>
+
+  <rect x="630" y="150" width="120" height="40" rx="5" fill="#fef9e7" stroke="#f1c40f" stroke-width="1"/>
+  <text x="690" y="175" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#d4ac0d">R_explore</text>
+
+  <rect x="500" y="200" width="120" height="40" rx="5" fill="#f5eef8" stroke="#9b59b6" stroke-width="1"/>
+  <text x="560" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#8e44ad">R_cross</text>
+
+  <!-- Combined Reward -->
+  <rect x="540" y="260" width="160" height="45" rx="8" fill="#2c3e50" stroke="#1a252f" stroke-width="2"/>
+  <text x="620" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Combined Reward</text>
+  <text x="620" y="295" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#bdc3c7">R = w₁R_e + w₂R_x + w₃R_c</text>
+
+  <!-- Arrows to combined -->
+  <line x1="560" y1="190" x2="600" y2="255" stroke="#95a5a6" stroke-width="1"/>
+  <line x1="690" y1="190" x2="650" y2="255" stroke="#95a5a6" stroke-width="1"/>
+  <line x1="560" y1="240" x2="590" y2="255" stroke="#95a5a6" stroke-width="1"/>
+
+  <!-- Advantage Computation -->
+  <rect x="540" y="320" width="160" height="40" rx="8" fill="#ebedef" stroke="#bdc3c7" stroke-width="2"/>
+  <text x="620" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#2c3e50">Â = (R - μ) / σ</text>
+
+  <line x1="620" y1="305" x2="620" y2="315" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Algorithm Options -->
+  <rect x="500" y="380" width="70" height="35" rx="5" fill="#3498db" stroke="#2980b9" stroke-width="1"/>
+  <text x="535" y="402" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="white">GRPO</text>
+
+  <rect x="580" y="380" width="70" height="35" rx="5" fill="#e74c3c" stroke="#c0392b" stroke-width="1"/>
+  <text x="615" y="402" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="white">GSPO</text>
+
+  <rect x="660" y="380" width="70" height="35" rx="5" fill="#27ae60" stroke="#1e8449" stroke-width="1"/>
+  <text x="695" y="402" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="white">SAPO</text>
+
+  <line x1="620" y1="360" x2="620" y2="375" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Update arrows back to models -->
+  <path d="M 535 415 Q 500 450, 250 430 Q 150 420, 180 200" fill="none" stroke="#3498db" stroke-width="2" stroke-dasharray="4,2" marker-end="url(#arrowhead)"/>
+  <text x="100" y="380" font-family="Arial, sans-serif" font-size="10" fill="#3498db">Update θ</text>
+
+  <!-- Legend -->
+  <rect x="580" y="440" width="180" height="50" rx="5" fill="white" stroke="#bdc3c7" stroke-width="1"/>
+  <text x="670" y="455" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#7f8c8d">Legend</text>
+  <circle cx="600" cy="470" r="5" fill="#27ae60"/>
+  <text x="615" y="473" font-family="Arial, sans-serif" font-size="8" fill="#2c3e50">Success</text>
+  <circle cx="680" cy="470" r="5" fill="#e74c3c"/>
+  <text x="695" y="473" font-family="Arial, sans-serif" font-size="8" fill="#2c3e50">Fail</text>
+  <circle cx="740" cy="470" r="5" fill="#f39c12"/>
+  <text x="755" y="473" font-family="Arial, sans-serif" font-size="8" fill="#2c3e50">Rescue</text>
+</svg>
