@@ -24,7 +24,13 @@ import wandb
 from pathlib import Path
 
 from ..losses import get_loss_fn
-from ..rewards import CombinedRewardFunction
+from ..rewards import CombinedRewardFunction, MultiStrategyReward
+from ..data.preprocessing import (
+    format_prompt,
+    format_multi_strategy_prompt,
+    format_multi_strategy_contexted_prompt,
+    extract_xml_answer,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -97,11 +103,39 @@ class BaseCollabTrainer:
         # Reward function
         self.reward_fn = CombinedRewardFunction(config["rewards"])
 
+        # Multi-strategy prompting config
+        self.prompting_config = config.get("prompting", {})
+        self.multi_strategy = self.prompting_config.get("multi_strategy", False)
+
+        # Multi-strategy reward function (used when multi_strategy=True)
+        if self.multi_strategy:
+            logger.info("Multi-strategy prompting enabled")
+            self.ms_reward_fn = MultiStrategyReward(
+                w_correct=self.prompting_config.get("ms_w_correct", 2.0),
+                w_diversity=self.prompting_config.get("ms_w_diversity", 0.5),
+                w_consistency=self.prompting_config.get("ms_w_consistency", 1.5),
+                w_format=self.prompting_config.get("ms_w_format", 0.3),
+                diversity_threshold=self.prompting_config.get("diversity_threshold", 0.8),
+            )
+        else:
+            self.ms_reward_fn = None
+
         # Training state
         self.state = TrainingState()
 
         # Logging
         self.use_wandb = config.get("use_wandb", False)
+
+    def get_effective_reward_fn(self):
+        """
+        Get the effective reward function based on config.
+
+        Returns:
+            MultiStrategyReward if multi_strategy is enabled, else CombinedRewardFunction
+        """
+        if self.multi_strategy and self.ms_reward_fn is not None:
+            return self.ms_reward_fn
+        return self.reward_fn
 
     def load_model(
         self,
@@ -207,6 +241,7 @@ class BaseCollabTrainer:
         questions: List[str],
         num_traces: int,
         context: str = None,
+        use_multi_strategy: bool = None,
     ) -> List[List[str]]:
         """
         Generate reasoning traces for questions.
@@ -215,7 +250,8 @@ class BaseCollabTrainer:
             model_id: Which model to use
             questions: List of questions
             num_traces: Number of traces per question
-            context: Optional context to prepend
+            context: Optional context to prepend (for rescue/contexted generation)
+            use_multi_strategy: Override multi_strategy setting (None = use config)
 
         Returns:
             List of trace lists (one list per question)
@@ -224,14 +260,26 @@ class BaseCollabTrainer:
         tokenizer = self.tokenizers[model_id]
         model.eval()
 
+        # Determine if using multi-strategy
+        multi_strategy = use_multi_strategy if use_multi_strategy is not None else self.multi_strategy
+
         all_traces = []
 
         for question in questions:
-            # Prepare prompt
-            if context:
-                prompt = f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+            # Prepare prompt based on mode
+            if multi_strategy:
+                if context:
+                    # Multi-strategy with context (rescue)
+                    prompt = format_multi_strategy_contexted_prompt(question, context)
+                else:
+                    # Multi-strategy cold generation
+                    prompt = format_multi_strategy_prompt(question)
             else:
-                prompt = f"Question: {question}\n\nLet's solve this step by step:"
+                # Standard prompt
+                if context:
+                    prompt = f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+                else:
+                    prompt = format_prompt(question)
 
             inputs = tokenizer(
                 prompt,
@@ -264,6 +312,32 @@ class BaseCollabTrainer:
 
         model.train()
         return all_traces
+
+    def get_prompt_for_question(
+        self,
+        question: str,
+        context: str = None,
+    ) -> str:
+        """
+        Get the appropriate prompt for a question.
+
+        Args:
+            question: The question to solve
+            context: Optional context (for rescue generation)
+
+        Returns:
+            Formatted prompt string
+        """
+        if self.multi_strategy:
+            if context:
+                return format_multi_strategy_contexted_prompt(question, context)
+            else:
+                return format_multi_strategy_prompt(question)
+        else:
+            if context:
+                return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+            else:
+                return format_prompt(question)
 
     def compute_log_probs(
         self,

@@ -61,7 +61,10 @@ class CollaborativeEvaluator:
         self.metrics = defaultdict(list)
 
     def _load_models(self):
-        """Load models from checkpoint."""
+        """Load models from checkpoint (supports LoRA adapters)."""
+        from peft import PeftModel
+        import json
+
         # Find model directories
         model_dirs = [d for d in self.checkpoint_dir.iterdir() if d.is_dir() and d.name.startswith("M")]
 
@@ -69,13 +72,40 @@ class CollaborativeEvaluator:
             model_id = model_dir.name
             logger.info(f"Loading {model_id} from {model_dir}")
 
-            tokenizer = AutoTokenizer.from_pretrained(model_dir)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_dir,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-            )
-            model.eval()
+            # Check if this is a LoRA adapter checkpoint
+            adapter_config_path = model_dir / "adapter_config.json"
+
+            if adapter_config_path.exists():
+                # Load LoRA adapter on top of base model
+                with open(adapter_config_path) as f:
+                    adapter_config = json.load(f)
+
+                base_model_name = adapter_config.get("base_model_name_or_path")
+                logger.info(f"  Base model: {base_model_name}")
+                logger.info(f"  Loading as LoRA adapter...")
+
+                # Load tokenizer from adapter dir (has chat template)
+                tokenizer = AutoTokenizer.from_pretrained(model_dir)
+
+                # Load base model
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    base_model_name,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto",
+                )
+
+                # Load LoRA adapter
+                model = PeftModel.from_pretrained(base_model, model_dir)
+                model.eval()
+            else:
+                # Full model checkpoint
+                tokenizer = AutoTokenizer.from_pretrained(model_dir)
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_dir,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto",
+                )
+                model.eval()
 
             self.models[model_id] = model
             self.tokenizers[model_id] = tokenizer
