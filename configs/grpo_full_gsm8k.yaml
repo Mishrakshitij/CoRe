@@ -26,12 +26,12 @@ models:
       size: "3B"
 
 training:
-  # Full GSM8K dataset
+  # Full GSM8K dataset - use all train samples
   dataset: "gsm8k"
-  num_samples: 7500
-  train_split: 0.8    # 6000 for training
-  val_split: 0.1      # 750 for validation
-  test_split: 0.1     # 750 for testing
+  num_samples: -1     # Use all available samples
+  train_split: 1.0    # Use full train dataset (~7473 samples)
+  val_split: 0.0      # No validation split
+  test_split: 0.0     # No test split (use official test set separately)
 
   # Training epochs
   num_epochs: 2
@@ -63,7 +63,7 @@ training:
   # Checkpointing
   save_steps: 500
   eval_steps: 250
-  logging_steps: 50
+  logging_steps: 5
 
 # GRPO algorithm configuration
 policy_optimization:
