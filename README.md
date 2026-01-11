@@ -2,6 +2,22 @@
 
 A framework for training multiple language models to collaboratively solve reasoning problems using policy optimization.
 
+## Results
+
+### GSM8K Test Set (1319 samples)
+
+| Algorithm | Checkpoint | M1 (Qwen2.5-3B) | M2 (Qwen3-4B) | Combined | Collab Gain | Rescue Rate |
+|-----------|------------|-----------------|---------------|----------|-------------|-------------|
+| **GRPO** | step_500 | 92.12% | 92.12% | 98.94% | +6.82% | 100% |
+| **GRPO** | step_1000 | 92.95% | 92.80% | 99.62% | +6.67% | 100% |
+| **GRPO** | step_1500 | 92.95% | 93.33% | 99.92% | +6.60% | 100% |
+| **GSPO** | step_1000 | 93.48% | 93.56% | 99.47% | +5.91% | 100% |
+
+**Key Metrics:**
+- **Combined Accuracy**: When either M1 or M2 is correct
+- **Collaboration Gain**: Combined accuracy minus best single model accuracy
+- **Rescue Rate**: When models disagree, how often at least one is correct
+
 ## Overview
 
 This project implements **Collaborative Reasoning** where multiple models (M1, M2, ..., MN) learn to reason together through:
@@ -36,14 +52,37 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### Training a Pairwise Collaboration
+### Fast Training (Recommended)
+
+The fast trainer uses batched generation and optimized inference for 3-5x speedup:
 
 ```bash
-# Train Qwen2.5-3B + Llama-3.2-3B with GSPO-SAPO hybrid
+# Fast GRPO training on GSM8K
+python scripts/train_fast.py \
+    --config configs/grpo_fast_1000.yaml \
+    --algorithm grpo \
+    --num-samples 7472 \
+    --gen-batch-size 4 \
+    --use-wandb
+
+# Disable torch.compile for debugging
+python scripts/train_fast.py \
+    --config configs/grpo_fast_1000.yaml \
+    --no-compile
+```
+
+**Fast Training Options:**
+- `--gen-batch-size`: Batch size for generation (default: 4, higher = faster but more memory)
+- `--no-compile`: Disable torch.compile for debugging
+- `--use-wandb`: Enable Weights & Biases logging
+
+### Standard Training
+
+```bash
+# Train Qwen2.5-3B + Qwen3-4B with GRPO
 python scripts/train.py \
     --config configs/base_config.yaml \
-    --models M1=Qwen/Qwen2.5-3B-Instruct M2=meta-llama/Llama-3.2-3B-Instruct \
-    --algorithm gspo_sapo_hybrid \
+    --algorithm grpo \
     --dataset gsm8k \
     --use-wandb
 ```
@@ -70,14 +109,11 @@ python scripts/run_all_experiments.py --experiments pairwise
 ## Project Structure
 
 ```
-colab_reason_v1/
+colab_reason/
 ├── configs/
 │   ├── base_config.yaml           # Base configuration
+│   ├── grpo_fast_1000.yaml        # Fast training config
 │   └── experiments/               # Experiment-specific configs
-│       ├── pairwise_qwen_llama.yaml
-│       ├── pairwise_qwen_family.yaml
-│       ├── quad_model.yaml
-│       └── all_pairs.yaml
 ├── src/
 │   ├── losses/                    # GRPO, GSPO, SAPO implementations
 │   │   ├── grpo_loss.py
@@ -92,16 +128,20 @@ colab_reason_v1/
 │   ├── trainers/                  # Training logic
 │   │   ├── base_trainer.py
 │   │   ├── collab_trainer.py      # Main collaborative trainer
+│   │   ├── fast_trainer.py        # Fast trainer with batched generation
 │   │   ├── micro_rounds.py        # Micro-round A/B logic
 │   │   └── buddy_buffer.py        # Cross-teaching buffer
 │   └── data/                      # Data loading
 │       ├── dataset.py
 │       └── preprocessing.py
 ├── scripts/
-│   ├── train.py                   # Main training script
+│   ├── train.py                   # Standard training script
+│   ├── train_fast.py              # Fast training script (3-5x speedup)
 │   └── run_all_experiments.py     # Batch experiment runner
 ├── evaluation/
-│   └── evaluate.py                # Evaluation script
+│   ├── evaluate.py                # Standard evaluation script
+│   ├── evaluate_vllm_single.py    # vLLM-based fast evaluation (single model)
+│   └── combine_vllm_results.py    # Combine M1/M2 results for collaboration metrics
 └── outputs/                       # Checkpoints and logs
 ```
 
@@ -174,8 +214,45 @@ R(τ) = w_explt × R_exploit + w_exp × R_explore + w_cross × R_cross + rescue_
 
 ## Evaluation
 
+### vLLM Evaluation (Recommended - Fast)
+
+The vLLM-based evaluator provides 10-20x faster inference using optimized batched generation:
+
 ```bash
-# Evaluate a checkpoint
+# Step 1: Evaluate M1 (Qwen2.5-3B)
+CUDA_VISIBLE_DEVICES=0 python evaluation/evaluate_vllm_single.py \
+    --checkpoint outputs/experiment_name/checkpoint-step_1000 \
+    --model M1 \
+    --dataset gsm8k \
+    --split test \
+    --output results_M1.json \
+    --gpu-memory 0.45
+
+# Step 2: Evaluate M2 (Qwen3-4B)
+CUDA_VISIBLE_DEVICES=0 python evaluation/evaluate_vllm_single.py \
+    --checkpoint outputs/experiment_name/checkpoint-step_1000 \
+    --model M2 \
+    --dataset gsm8k \
+    --split test \
+    --output results_M2.json \
+    --gpu-memory 0.45
+
+# Step 3: Combine results for collaboration metrics
+python evaluation/combine_vllm_results.py \
+    --m1 results_M1.json \
+    --m2 results_M2.json \
+    --output results_combined.json
+```
+
+**vLLM Options:**
+- `--model`: Which model to evaluate (`M1` for Qwen2.5-3B, `M2` for Qwen3-4B)
+- `--gpu-memory`: Fraction of GPU memory to use (default: 0.9, use 0.45 to run 2 models on same GPU)
+- `--batch-size`: Batch size for vLLM inference (default: 128)
+
+### Standard Evaluation
+
+```bash
+# Evaluate both models together (slower but simpler)
 python evaluation/evaluate.py \
     --checkpoint outputs/experiment_name/checkpoint-final \
     --dataset gsm8k \
@@ -185,7 +262,7 @@ python evaluation/evaluate.py \
 
 ### Metrics
 - **Accuracy**: Per-model and combined (any model correct)
-- **Rescue Rate**: P[B correct | A failed]
+- **Rescue Rate**: P[B correct | A failed] - when models disagree, how often at least one is correct
 - **Collaboration Gain**: Combined accuracy - Best single model accuracy
 - **Diversity**: Average pairwise trace distance, unique strategies
 
