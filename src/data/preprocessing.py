@@ -9,6 +9,44 @@ import re
 from typing import Dict, List, Tuple, Optional
 
 
+def extract_boxed_content(text: str) -> Optional[str]:
+    """
+    Extract content from \\boxed{...} handling nested braces correctly.
+
+    Examples:
+        - \\boxed{42} -> "42"
+        - \\boxed{\\frac{1}{2}} -> "\\frac{1}{2}"
+        - \\boxed{x^{2}+1} -> "x^{2}+1"
+
+    Args:
+        text: Text containing \\boxed{...}
+
+    Returns:
+        Content inside boxed, or None if not found
+    """
+    # Find the start of \boxed{
+    match = re.search(r'\\boxed\{', text)
+    if not match:
+        return None
+
+    start_idx = match.end()  # Position right after the opening {
+    brace_count = 1
+    idx = start_idx
+
+    while idx < len(text) and brace_count > 0:
+        if text[idx] == '{':
+            brace_count += 1
+        elif text[idx] == '}':
+            brace_count -= 1
+        idx += 1
+
+    if brace_count == 0:
+        # idx is now one past the closing brace
+        return text[start_idx:idx-1]
+
+    return None
+
+
 def preprocess_gsm8k(item: Dict) -> Dict:
     """
     Preprocess a GSM8K example.
@@ -91,16 +129,20 @@ def extract_answer(text: str) -> Optional[str]:
     Extract the final answer from a reasoning trace.
 
     Looks for common patterns:
-    - "the answer is X"
+    - "\\boxed{X}" (with nested braces support)
     - "#### X"
-    - "\\boxed{X}"
+    - "the answer is X"
     - Last number in the text
     """
     text_lower = text.lower()
 
-    # Pattern priority order
+    # First try boxed with nested braces support
+    boxed_answer = extract_boxed_content(text)
+    if boxed_answer:
+        return boxed_answer.strip()
+
+    # Then try other patterns
     patterns = [
-        (r'\\boxed\{([^}]+)\}', text),  # LaTeX boxed
         (r'####\s*([^\n]+)', text),  # GSM8K format
         (r'(?:the answer is|final answer:?)\s*[:\s]*([^\n]+)', text_lower),
         (r'(?:therefore|thus|so|hence)[,\s]+(?:the )?(?:answer is )?([^\n.]+)', text_lower),
