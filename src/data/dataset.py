@@ -13,6 +13,8 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 import logging
 
+from .preprocessing import extract_boxed_content
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,23 +91,47 @@ class ReasoningDataset(Dataset):
         split: str = "train",
         max_samples: int = None,
         difficulty: str = None,  # "easy", "medium", "hard"
+        use_qwedsacf: bool = False,  # Use qwedsacf/competition_math instead
+        train_test_split: float = 0.8,  # For qwedsacf dataset (only has train)
     ) -> "ReasoningDataset":
-        """Load MATH dataset from HuggingFace."""
-        logger.info(f"Loading MATH {split} split...")
+        """Load MATH dataset from HuggingFace.
 
-        dataset = load_dataset("hendrycks/competition_math", split=split)
+        Args:
+            split: "train" or "test"
+            max_samples: Maximum samples to load
+            difficulty: Filter by difficulty ("easy", "medium", "hard")
+            use_qwedsacf: If True, use qwedsacf/competition_math (12.5k, train only)
+            train_test_split: Train ratio when using qwedsacf (default 0.8 = 80:20)
+        """
+        import re
+
+        if use_qwedsacf:
+            logger.info(f"Loading qwedsacf/competition_math {split} split (80:20 from train)...")
+            # qwedsacf/competition_math only has train split with 12.5k samples
+            full_dataset = load_dataset("qwedsacf/competition_math", split="train")
+
+            # Split into train/test (80:20)
+            total_samples = len(full_dataset)
+            train_size = int(total_samples * train_test_split)
+
+            if split == "train":
+                dataset = full_dataset.select(range(train_size))
+            else:  # test
+                dataset = full_dataset.select(range(train_size, total_samples))
+
+            logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
+        else:
+            logger.info(f"Loading hendrycks/competition_math {split} split...")
+            dataset = load_dataset("hendrycks/competition_math", split=split)
 
         data = []
         for item in dataset:
             # Extract answer from solution
             solution = item["solution"]
 
-            # MATH format often has \boxed{answer}
-            import re
-            boxed_match = re.search(r'\\boxed\{([^}]+)\}', solution)
-            if boxed_match:
-                answer = boxed_match.group(1)
-            else:
+            # MATH format often has \boxed{answer} - use helper for nested braces
+            answer = extract_boxed_content(solution)
+            if not answer:
                 answer = solution.split("\n")[-1].strip()
 
             # Filter by difficulty if specified
@@ -202,6 +228,20 @@ def create_dataloaders(
         test_dataset = ReasoningDataset.from_math(
             split="test",
             max_samples=int(num_samples * 0.1),
+        )
+    elif dataset_name == "math_qwedsacf":
+        # Use qwedsacf/competition_math with 80:20 train:test split
+        full_dataset = ReasoningDataset.from_math(
+            split="train",
+            max_samples=num_samples,
+            use_qwedsacf=True,
+            train_test_split=0.8,
+        )
+        test_dataset = ReasoningDataset.from_math(
+            split="test",
+            max_samples=int(num_samples * 0.1) if num_samples and num_samples > 0 else None,
+            use_qwedsacf=True,
+            train_test_split=0.8,
         )
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
