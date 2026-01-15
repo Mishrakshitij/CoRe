@@ -25,6 +25,13 @@ Usage:
 
 import os
 import sys
+
+# CRITICAL: Set HuggingFace cache BEFORE any other imports
+# This prevents issues with /shared/.cache directory permissions
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = os.path.expanduser("~/.cache/huggingface")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 import argparse
 from pathlib import Path
 from datetime import datetime

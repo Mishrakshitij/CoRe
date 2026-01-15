@@ -17,14 +17,21 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 
-# Optional: sentence-transformers for semantic diversity
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
-    HAS_SENTENCE_TRANSFORMER = True
-except ImportError:
-    SENTENCE_MODEL = None
-    HAS_SENTENCE_TRANSFORMER = False
+# Optional: sentence-transformers for semantic diversity (lazy-loaded)
+SENTENCE_MODEL = None
+HAS_SENTENCE_TRANSFORMER = False
+
+def _get_sentence_model():
+    """Lazy-load sentence transformer model to avoid import-time issues."""
+    global SENTENCE_MODEL, HAS_SENTENCE_TRANSFORMER
+    if SENTENCE_MODEL is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            SENTENCE_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+            HAS_SENTENCE_TRANSFORMER = True
+        except (ImportError, Exception):
+            HAS_SENTENCE_TRANSFORMER = False
+    return SENTENCE_MODEL
 
 
 @dataclass
@@ -180,7 +187,8 @@ class MultiStrategyReward:
             # Collapse to fixed exploitation bonus
             return (self.w_consistency, num_strategies, num_strategies)
 
-        if not self.use_semantic_diversity or SENTENCE_MODEL is None:
+        sentence_model = _get_sentence_model() if self.use_semantic_diversity else None
+        if sentence_model is None:
             # Fallback: simple count-based diversity
             unique_count = num_strategies  # Assume all are unique
             diversity = min(0.5, 0.15 * unique_count)
@@ -188,7 +196,7 @@ class MultiStrategyReward:
 
         # Semantic diversity using embeddings
         try:
-            embeddings = SENTENCE_MODEL.encode(reasoning_blocks)
+            embeddings = sentence_model.encode(reasoning_blocks)
             n = len(embeddings)
 
             # Compute pairwise cosine similarities
