@@ -15,6 +15,12 @@ Usage:
 """
 
 import os
+
+# Ensure HuggingFace cache is set correctly before any imports
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = os.path.expanduser("~/.cache/huggingface")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader

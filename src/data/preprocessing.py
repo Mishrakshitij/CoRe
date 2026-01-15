@@ -309,31 +309,53 @@ Question: {question}
 Solve using at least 2 different approaches:"""
 
 
-def format_multi_strategy_prompt(question: str) -> str:
+def format_multi_strategy_prompt(question: str, dataset: str = "gsm8k") -> str:
     """
     Format a question using multi-strategy exploration prompt.
 
     Args:
         question: The question to solve
+        dataset: Dataset name for domain-specific prompts (default: "gsm8k")
+                 Supported: "gsm8k", "math", "aime"
 
     Returns:
         Multi-strategy formatted prompt
     """
-    return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
+    # For backward compatibility, use inline GSM8K template if no dataset specified
+    # or if prompts module not available
+    if dataset.lower() == "gsm8k":
+        return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
+
+    # Use domain-specific prompts from prompts module
+    try:
+        from src.prompts import get_prompt_template
+        template = get_prompt_template(dataset)
+        return template.format_prompt(question)
+    except (ImportError, ValueError):
+        # Fallback to GSM8K if prompts module unavailable
+        return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
 
 
-def format_multi_strategy_contexted_prompt(question: str, teacher_context: str) -> str:
+def format_multi_strategy_contexted_prompt(
+    question: str,
+    teacher_context: str,
+    dataset: str = "gsm8k"
+) -> str:
     """
     Format a contexted prompt with multi-strategy format and teacher hint.
 
     Args:
         question: The question to solve
         teacher_context: Compressed hint from successful peer model
+        dataset: Dataset name for domain-specific prompts (default: "gsm8k")
+                 Supported: "gsm8k", "math", "aime"
 
     Returns:
         Multi-strategy contexted prompt
     """
-    return f"""You are an expert mathematical problem solver. A peer model provided this helpful approach:
+    # For backward compatibility with GSM8K
+    if dataset.lower() == "gsm8k":
+        return f"""You are an expert mathematical problem solver. A peer model provided this helpful approach:
 
 <peer_hint>
 {teacher_context}
@@ -369,6 +391,15 @@ Your final numerical answer
 Question: {question}
 
 Solve using the hint and an alternative approach:"""
+
+    # Use domain-specific prompts from prompts module
+    try:
+        from src.prompts import get_prompt_template
+        template = get_prompt_template(dataset)
+        return template.format_contexted_prompt(question, teacher_context)
+    except (ImportError, ValueError):
+        # Fallback to GSM8K format
+        return format_multi_strategy_contexted_prompt(question, teacher_context, "gsm8k")
 
 
 def extract_xml_answer(text: str) -> Optional[str]:
