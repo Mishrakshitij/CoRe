@@ -25,16 +25,17 @@ def combine_results(m1_path: str, m2_path: str, output_path: str):
     with open(m2_path) as f:
         m2_data = json.load(f)
 
-    m1_results = {r["question_id"]: r for r in m1_data["results"]}
-    m2_results = {r["question_id"]: r for r in m2_data["results"]}
+    # FIX: Match by question TEXT instead of question_id
+    m1_results = {r["question"]: r for r in m1_data["results"]}
+    m2_results = {r["question"]: r for r in m2_data["results"]}
 
     # Verify same questions
     if set(m1_results.keys()) != set(m2_results.keys()):
-        logger.warning("Question IDs don't match between M1 and M2!")
-        common_ids = set(m1_results.keys()) & set(m2_results.keys())
-        logger.info(f"Using {len(common_ids)} common questions")
+        logger.warning("Questions don't match between M1 and M2!")
+        common_questions = set(m1_results.keys()) & set(m2_results.keys())
+        logger.info(f"Using {len(common_questions)} common questions")
     else:
-        common_ids = set(m1_results.keys())
+        common_questions = set(m1_results.keys())
 
     # Compute combined metrics
     m1_correct = 0
@@ -45,9 +46,10 @@ def combine_results(m1_path: str, m2_path: str, output_path: str):
 
     combined_results = []
 
-    for q_id in sorted(common_ids):
-        m1_r = m1_results[q_id]
-        m2_r = m2_results[q_id]
+    # Sort questions for deterministic output
+    for q_id, question in enumerate(sorted(common_questions)):
+        m1_r = m1_results[question]
+        m2_r = m2_results[question]
 
         m1_is_correct = m1_r["is_correct"]
         m2_is_correct = m2_r["is_correct"]
@@ -69,7 +71,7 @@ def combine_results(m1_path: str, m2_path: str, output_path: str):
 
         combined_results.append({
             "question_id": q_id,
-            "question": m1_r["question"],
+            "question": question,
             "ground_truth": m1_r["ground_truth"],
             "M1_correct": m1_is_correct,
             "M2_correct": m2_is_correct,
@@ -78,7 +80,7 @@ def combine_results(m1_path: str, m2_path: str, output_path: str):
             "M2_trace": m2_r.get("best_trace", ""),
         })
 
-    total = len(common_ids)
+    total = len(common_questions)
     m1_acc = m1_correct / total if total > 0 else 0
     m2_acc = m2_correct / total if total > 0 else 0
     combined_acc = combined_correct / total if total > 0 else 0

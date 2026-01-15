@@ -61,6 +61,7 @@ class ReasoningDataset(Dataset):
         cls,
         split: str = "train",
         max_samples: int = None,
+        shuffle: bool = True,  # Set False for deterministic evaluation
     ) -> "ReasoningDataset":
         """Load GSM8K dataset from HuggingFace."""
         logger.info(f"Loading GSM8K {split} split...")
@@ -83,7 +84,7 @@ class ReasoningDataset(Dataset):
                 "solution": solution,
             })
 
-        return cls(data, max_samples=max_samples)
+        return cls(data, max_samples=max_samples, shuffle=shuffle)
 
     @classmethod
     def from_math(
@@ -93,6 +94,7 @@ class ReasoningDataset(Dataset):
         difficulty: str = None,  # "easy", "medium", "hard"
         use_qwedsacf: bool = False,  # Use qwedsacf/competition_math instead
         train_test_split: float = 0.8,  # For qwedsacf dataset (only has train)
+        shuffle: bool = True,  # Set False for deterministic evaluation
     ) -> "ReasoningDataset":
         """Load MATH dataset from HuggingFace.
 
@@ -152,7 +154,7 @@ class ReasoningDataset(Dataset):
                 "type": item.get("type", ""),
             })
 
-        return cls(data, max_samples=max_samples)
+        return cls(data, max_samples=max_samples, shuffle=shuffle)
 
     @classmethod
     def from_json(
