@@ -69,7 +69,7 @@ def main():
         "--algorithm",
         type=str,
         default=None,
-        choices=["grpo", "gspo", "sapo"],
+        choices=["grpo", "gspo", "sapo", "hybrid"],
         help="Override algorithm from config",
     )
     parser.add_argument(

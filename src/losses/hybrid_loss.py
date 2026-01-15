@@ -74,7 +74,8 @@ class GSPOSAPOHybridLoss(BasePolicyLoss):
             torch.full_like(weight, 1.0 + self.epsilon_high),
             torch.full_like(weight, 1.0 + self.epsilon),
         )
-        return torch.clamp(weight, 1.0 - self.epsilon, clip_high)
+        clip_low = torch.full_like(weight, 1.0 - self.epsilon)
+        return torch.clamp(weight, clip_low, clip_high)
 
     def compute_sapo_gate(
         self,

@@ -400,15 +400,24 @@ class BaseCollabTrainer:
         return token_log_probs, mask
 
     def save_checkpoint(self, tag: str = "latest"):
-        """Save training checkpoint."""
-        checkpoint_dir = self.output_dir / f"checkpoint-{tag}"
-        checkpoint_dir.mkdir(exist_ok=True)
+        """Save training checkpoint with verification."""
+        # Use absolute path to avoid any working directory issues
+        checkpoint_dir = self.output_dir.resolve() / f"checkpoint-{tag}"
+
+        # Ensure parent directory exists first
+        self.output_dir.resolve().mkdir(parents=True, exist_ok=True)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"Saving checkpoint to {checkpoint_dir} (absolute: {checkpoint_dir.resolve()})")
+
+        saved_files = []
 
         # Save models
         for model_id, model in self.models.items():
             model_dir = checkpoint_dir / model_id
             model.save_pretrained(model_dir)
             self.tokenizers[model_id].save_pretrained(model_dir)
+            saved_files.append(model_dir)
 
         # Save training state
         state_dict = {
@@ -419,17 +428,23 @@ class BaseCollabTrainer:
             "metrics_history": self.state.metrics_history,
         }
 
-        with open(checkpoint_dir / "training_state.json", "w") as f:
+        state_file = checkpoint_dir / "training_state.json"
+        with open(state_file, "w") as f:
             json.dump(state_dict, f, indent=2)
+        saved_files.append(state_file)
 
         # Save optimizer states
         for model_id, optimizer in self.optimizers.items():
-            torch.save(
-                optimizer.state_dict(),
-                checkpoint_dir / f"optimizer_{model_id}.pt",
-            )
+            opt_file = checkpoint_dir / f"optimizer_{model_id}.pt"
+            torch.save(optimizer.state_dict(), opt_file)
+            saved_files.append(opt_file)
 
-        logger.info(f"Saved checkpoint to {checkpoint_dir}")
+        # Verify checkpoint was saved
+        if checkpoint_dir.exists():
+            file_count = sum(1 for _ in checkpoint_dir.rglob("*") if _.is_file())
+            logger.info(f"Checkpoint verified: {checkpoint_dir} ({file_count} files)")
+        else:
+            logger.error(f"CHECKPOINT VERIFICATION FAILED: {checkpoint_dir} does not exist after save!")
 
     def load_checkpoint(self, checkpoint_dir: str):
         """Load training checkpoint."""

@@ -33,6 +33,7 @@ def get_loss_fn(algorithm: str, config: dict):
         "gspo": GSPOLoss,
         "sapo": SAPOLoss,
         "gspo_sapo_hybrid": GSPOSAPOHybridLoss,
+        "hybrid": GSPOSAPOHybridLoss,
     }
 
     if algorithm not in loss_map:

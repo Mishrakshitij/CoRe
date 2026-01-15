@@ -37,32 +37,47 @@ class VLLMSingleModelEvaluator:
     def __init__(
         self,
         base_model: str,
-        adapter_path: str,
-        model_id: str,
+        adapter_path: str = None,
+        model_id: str = "model",
         gpu_memory_utilization: float = 0.85,
+        base_only: bool = False,
     ):
         self.model_id = model_id
         self.adapter_path = adapter_path
+        self.base_only = base_only
 
         logger.info(f"Initializing vLLM for {model_id}...")
         logger.info(f"  Base model: {base_model}")
-        logger.info(f"  Adapter: {adapter_path}")
+        if not base_only:
+            logger.info(f"  Adapter: {adapter_path}")
+        else:
+            logger.info(f"  Mode: BASE ONLY (no adapter)")
 
-        # Initialize vLLM with LoRA
-        self.llm = LLM(
-            model=base_model,
-            enable_lora=True,
-            max_lora_rank=64,
-            gpu_memory_utilization=gpu_memory_utilization,
-            trust_remote_code=True,
-            max_model_len=2048,
-        )
-
-        self.lora_request = LoRARequest(
-            lora_name=model_id,
-            lora_int_id=1,
-            lora_local_path=adapter_path,
-        )
+        # Initialize vLLM
+        if base_only:
+            # No LoRA - just base model
+            self.llm = LLM(
+                model=base_model,
+                gpu_memory_utilization=gpu_memory_utilization,
+                trust_remote_code=True,
+                max_model_len=2048,
+            )
+            self.lora_request = None
+        else:
+            # With LoRA adapter
+            self.llm = LLM(
+                model=base_model,
+                enable_lora=True,
+                max_lora_rank=64,
+                gpu_memory_utilization=gpu_memory_utilization,
+                trust_remote_code=True,
+                max_model_len=2048,
+            )
+            self.lora_request = LoRARequest(
+                lora_name=model_id,
+                lora_int_id=1,
+                lora_local_path=adapter_path,
+            )
 
         # Reward function for answer extraction
         self.reward_fn = CombinedRewardFunction({})
@@ -89,11 +104,17 @@ class VLLMSingleModelEvaluator:
             all_prompts.extend(prompts)
 
         # Generate with vLLM
-        outputs = self.llm.generate(
-            all_prompts,
-            self.sampling_params,
-            lora_request=self.lora_request,
-        )
+        if self.lora_request:
+            outputs = self.llm.generate(
+                all_prompts,
+                self.sampling_params,
+                lora_request=self.lora_request,
+            )
+        else:
+            outputs = self.llm.generate(
+                all_prompts,
+                self.sampling_params,
+            )
 
         # Organize outputs by question
         traces_per_question = [[] for _ in range(len(questions))]
@@ -169,10 +190,12 @@ class VLLMSingleModelEvaluator:
 
 def main():
     parser = argparse.ArgumentParser(description="vLLM single-model evaluation")
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to checkpoint directory")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to checkpoint directory (not needed with --base-only)")
     parser.add_argument("--model", type=str, required=True, choices=["M1", "M2"],
                         help="Which model to evaluate (M1 or M2)")
+    parser.add_argument("--base-only", action="store_true",
+                        help="Evaluate base model without LoRA adapter")
     parser.add_argument("--dataset", type=str, default="gsm8k")
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--max-samples", type=int, default=None)
@@ -183,34 +206,54 @@ def main():
 
     args = parser.parse_args()
 
-    # Load adapter config
-    checkpoint_dir = Path(args.checkpoint)
-    model_dir = checkpoint_dir / args.model
-    adapter_config_path = model_dir / "adapter_config.json"
+    # Base model paths
+    BASE_MODELS = {
+        "M1": "Qwen/Qwen2.5-3B-Instruct",
+        "M2": "Qwen/Qwen3-4B-Instruct-2507",
+    }
 
-    if not adapter_config_path.exists():
-        raise FileNotFoundError(f"Adapter config not found: {adapter_config_path}")
+    if args.base_only:
+        # Evaluate base model without adapter
+        base_model = BASE_MODELS[args.model]
+        adapter_path = None
+        model_id = f"{args.model}_base"
+        logger.info(f"Evaluating BASE model {args.model}: {base_model}")
+    else:
+        # Load adapter config
+        if not args.checkpoint:
+            raise ValueError("--checkpoint is required unless using --base-only")
 
-    with open(adapter_config_path) as f:
-        config = json.load(f)
+        checkpoint_dir = Path(args.checkpoint)
+        model_dir = checkpoint_dir / args.model
+        adapter_config_path = model_dir / "adapter_config.json"
 
-    base_model = config.get("base_model_name_or_path")
-    logger.info(f"Found {args.model}: base={base_model}")
+        if not adapter_config_path.exists():
+            raise FileNotFoundError(f"Adapter config not found: {adapter_config_path}")
+
+        with open(adapter_config_path) as f:
+            config = json.load(f)
+
+        base_model = config.get("base_model_name_or_path")
+        adapter_path = str(model_dir)
+        model_id = args.model
+        logger.info(f"Found {args.model}: base={base_model}")
 
     # Initialize evaluator
     evaluator = VLLMSingleModelEvaluator(
         base_model=base_model,
-        adapter_path=str(model_dir),
-        model_id=args.model,
+        adapter_path=adapter_path,
+        model_id=model_id,
         gpu_memory_utilization=args.gpu_memory,
+        base_only=args.base_only,
     )
 
-    # Load dataset
+    # Load dataset (shuffle=False for deterministic evaluation)
     logger.info(f"Loading {args.dataset} {args.split} split...")
     if args.dataset == "gsm8k":
-        dataset = ReasoningDataset.from_gsm8k(split=args.split)
+        dataset = ReasoningDataset.from_gsm8k(split=args.split, shuffle=False)
     else:
-        dataset = ReasoningDataset.from_math(split=args.split)
+        # Use qwedsacf/competition_math (cached locally) with 80:20 split
+        dataset = ReasoningDataset.from_math(split=args.split, use_qwedsacf=True, shuffle=False)
 
     # Evaluate
     logger.info("Starting evaluation...")
