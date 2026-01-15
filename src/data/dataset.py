@@ -196,6 +196,7 @@ def collate_fn(batch: List[Dict]) -> Dict[str, List]:
 def create_dataloaders(
     config: dict,
     dataset_name: str = "gsm8k",
+    accelerator=None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Create train, validation, and test dataloaders.
@@ -203,6 +204,7 @@ def create_dataloaders(
     Args:
         config: Training configuration
         dataset_name: Name of dataset to load
+        accelerator: Optional Accelerator instance for distributed training
 
     Returns:
         (train_loader, val_loader, test_loader)
@@ -259,11 +261,22 @@ def create_dataloaders(
     train_dataset = ReasoningDataset(train_data, shuffle=True)
     val_dataset = ReasoningDataset(val_data, shuffle=False)
 
-    # Create dataloaders
+    # Create dataloaders with optional distributed sampler
+    train_sampler = None
+    if accelerator is not None and accelerator.num_processes > 1:
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=accelerator.num_processes,
+            rank=accelerator.process_index,
+            shuffle=True,
+        )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         collate_fn=collate_fn,
         num_workers=4,
         pin_memory=True,

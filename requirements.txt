@@ -42,8 +42,8 @@ flake8>=6.0.0
 # Optional: Flash attention for faster training
 # flash-attn>=2.5.0  # Requires CUDA
 
-# Optional: DeepSpeed for multi-GPU
-# deepspeed>=0.12.0
+# DeepSpeed for multi-GPU training
+deepspeed>=0.12.0
 
 # Optional: bitsandbytes for quantization
 # bitsandbytes>=0.41.0
