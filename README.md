@@ -35,6 +35,35 @@ This project implements **Collaborative Reasoning** where multiple models (M1, M
 | **SAPO** | Soft Adaptive Policy Optimization (soft gating) | Sample efficiency |
 | **Hybrid** | GSPO + SAPO combination | Collaborative training |
 
+### Supported Datasets
+
+| Dataset | Domain | Answer Format | Notes |
+|---------|--------|---------------|-------|
+| **GSM8K** | Grade-school math | Numerical | 7.5K train, 1.3K test |
+| **MATH** | Competition math | LaTeX boxed | Uses qwedsacf/competition_math |
+| **AIME** | AMC/AIME competition | Integer (000-999) | AI-MO/aimo-validation-aime |
+| **GPQA** | Graduate-level science | MCQ (A/B/C/D) | Gated - requires HF auth |
+| **MedMCQA** | Medical entrance exam | MCQ (A/B/C/D) | 182K+ samples |
+
+**Using Different Datasets:**
+```bash
+# GSM8K (default)
+python scripts/train_fast.py --config configs/grpo_fast_1000.yaml --dataset gsm8k
+
+# MATH (competition math)
+python scripts/train_fast.py --config configs/grpo_full_math.yaml --dataset math_qwedsacf
+
+# AIME (competition)
+python scripts/train_fast.py --config configs/base_config.yaml --dataset aime
+
+# MedMCQA (medical)
+python scripts/train_fast.py --config configs/base_config.yaml --dataset medmcqa
+```
+
+**Note on GPQA:** GPQA is a gated dataset. To use it:
+1. Run `huggingface-cli login`
+2. Request access at https://huggingface.co/datasets/Idavidrein/gpqa
+
 ## Installation
 
 ```bash
