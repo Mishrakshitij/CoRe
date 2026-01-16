@@ -20,6 +20,7 @@ from typing import Dict, Type
 
 from .base import BasePromptTemplate
 from .math_prompts import GSM8KPrompt, MATHPrompt, AIMEPrompt
+from .science_prompts import GPQAPrompt, MedMCQAPrompt
 
 
 # Registry of prompt templates by dataset name
@@ -27,13 +28,20 @@ _PROMPT_REGISTRY: Dict[str, Type[BasePromptTemplate]] = {
     "gsm8k": GSM8KPrompt,
     "math": MATHPrompt,
     "aime": AIMEPrompt,
+    "gpqa": GPQAPrompt,
+    "medmcqa": MedMCQAPrompt,
 }
 
 # Aliases for common variations
 _PROMPT_ALIASES = {
     "competition_math": "math",
     "qwedsacf/competition_math": "math",
+    "math_qwedsacf": "math",
+    "aime-1983-2024": "aime",
     "aime-1983-2025": "aime",
+    "gpqa_diamond": "gpqa",
+    "gpqa_extended": "gpqa",
+    "gpqa_main": "gpqa",
 }
 
 
@@ -82,6 +90,8 @@ __all__ = [
     "GSM8KPrompt",
     "MATHPrompt",
     "AIMEPrompt",
+    "GPQAPrompt",
+    "MedMCQAPrompt",
     "get_prompt_template",
     "register_prompt_template",
 ]
