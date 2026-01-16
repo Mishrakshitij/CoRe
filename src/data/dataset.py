@@ -157,6 +157,217 @@ class ReasoningDataset(Dataset):
         return cls(data, max_samples=max_samples, shuffle=shuffle)
 
     @classmethod
+    def from_aime(
+        cls,
+        split: str = "train",
+        max_samples: int = None,
+        train_test_split: float = 0.8,
+        shuffle: bool = True,
+    ) -> "ReasoningDataset":
+        """Load AIME dataset from HuggingFace.
+
+        Uses AI-MO/aimo-validation-aime dataset.
+        AIME answers are integers from 000 to 999.
+
+        Args:
+            split: "train" or "test"
+            max_samples: Maximum samples to load
+            train_test_split: Train ratio (default 0.8 = 80:20)
+            shuffle: Whether to shuffle data
+        """
+        logger.info(f"Loading AIME dataset {split} split...")
+
+        # Load from HuggingFace - AI-MO/aimo-validation-aime has train split
+        full_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
+
+        # Split into train/test
+        total_samples = len(full_dataset)
+        train_size = int(total_samples * train_test_split)
+
+        if split == "train":
+            dataset = full_dataset.select(range(train_size))
+        else:  # test
+            dataset = full_dataset.select(range(train_size, total_samples))
+
+        logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
+
+        data = []
+        for item in dataset:
+            # AI-MO format: problem, solution, answer fields
+            question = item.get("problem", "")
+            answer = str(item.get("answer", ""))
+
+            # Normalize answer to 3 digits (AIME format)
+            try:
+                answer_int = int(answer)
+                answer = f"{answer_int:03d}"  # Zero-pad to 3 digits
+            except ValueError:
+                pass
+
+            data.append({
+                "question": question,
+                "answer": answer,
+                "solution": item.get("solution", ""),
+                "url": item.get("url", ""),
+            })
+
+        return cls(data, max_samples=max_samples, shuffle=shuffle)
+
+    @classmethod
+    def from_gpqa(
+        cls,
+        split: str = "train",
+        max_samples: int = None,
+        difficulty: str = "diamond",  # "diamond" (hardest), "extended", "main"
+        shuffle: bool = True,
+    ) -> "ReasoningDataset":
+        """Load GPQA (Graduate-Level Google-Proof Q&A) dataset.
+
+        Uses Idavidrein/gpqa dataset - science questions that are hard to Google.
+        Multiple choice format with 4 options.
+
+        Args:
+            split: "train" or "test" (maps to HF splits)
+            max_samples: Maximum samples to load
+            difficulty: "diamond" (hardest, 198), "extended" (546), "main" (448)
+            shuffle: Whether to shuffle data
+        """
+        logger.info(f"Loading GPQA {difficulty} dataset {split} split...")
+
+        # Map difficulty to HuggingFace config
+        config_map = {
+            "diamond": "gpqa_diamond",
+            "extended": "gpqa_extended",
+            "main": "gpqa_main",
+        }
+        config = config_map.get(difficulty, "gpqa_diamond")
+
+        # GPQA only has train split, we'll split it ourselves
+        # Note: GPQA is a gated dataset - requires HuggingFace authentication
+        # Run: huggingface-cli login and request access at https://huggingface.co/datasets/Idavidrein/gpqa
+        try:
+            full_dataset = load_dataset("Idavidrein/gpqa", config, split="train", trust_remote_code=True)
+        except Exception as e:
+            error_msg = str(e)
+            if "gated" in error_msg.lower() or "authenticated" in error_msg.lower():
+                raise RuntimeError(
+                    f"GPQA is a gated dataset. To access it:\n"
+                    f"1. Run: huggingface-cli login\n"
+                    f"2. Request access at: https://huggingface.co/datasets/Idavidrein/gpqa\n"
+                    f"Original error: {e}"
+                )
+            raise
+
+        # Split into train/test (80:20)
+        total_samples = len(full_dataset)
+        train_size = int(total_samples * 0.8)
+
+        if split == "train":
+            dataset = full_dataset.select(range(train_size))
+        else:  # test
+            dataset = full_dataset.select(range(train_size, total_samples))
+
+        logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
+
+        data = []
+        for item in dataset:
+            question = item.get("Question", item.get("question", ""))
+
+            # Get choices - GPQA has choice columns
+            choices = []
+            correct_idx = None
+            for key in ["Correct Answer", "Incorrect Answer 1", "Incorrect Answer 2", "Incorrect Answer 3"]:
+                if key in item and item[key]:
+                    if key == "Correct Answer":
+                        correct_idx = len(choices)
+                    choices.append(item[key])
+
+            # Format as MCQ
+            choice_labels = ["A", "B", "C", "D"]
+            formatted_choices = "\n".join([
+                f"{choice_labels[i]}. {choice}"
+                for i, choice in enumerate(choices)
+            ])
+
+            full_question = f"{question}\n\nChoices:\n{formatted_choices}"
+
+            # Answer is the letter of correct choice
+            answer = choice_labels[correct_idx] if correct_idx is not None else "A"
+
+            data.append({
+                "question": full_question,
+                "answer": answer,
+                "solution": "",
+                "choices": choices,
+                "correct_idx": correct_idx,
+                "subject": item.get("Subdomain", item.get("subdomain", "")),
+            })
+
+        return cls(data, max_samples=max_samples, shuffle=shuffle)
+
+    @classmethod
+    def from_medmcqa(
+        cls,
+        split: str = "train",
+        max_samples: int = None,
+        shuffle: bool = True,
+    ) -> "ReasoningDataset":
+        """Load MedMCQA (Medical Multiple Choice QA) dataset.
+
+        Uses openlifescienceai/medmcqa dataset - medical entrance exam questions.
+        Multiple choice format with 4 options.
+
+        Args:
+            split: "train", "validation", or "test"
+            max_samples: Maximum samples to load
+            shuffle: Whether to shuffle data
+        """
+        logger.info(f"Loading MedMCQA dataset {split} split...")
+
+        # MedMCQA has train/validation/test splits
+        hf_split = split if split in ["train", "validation", "test"] else "train"
+        dataset = load_dataset("openlifescienceai/medmcqa", split=hf_split)
+
+        logger.info(f"Loaded {len(dataset)} samples from {hf_split} split")
+
+        data = []
+        for item in dataset:
+            question = item.get("question", "")
+
+            # Get choices
+            choices = [
+                item.get("opa", ""),
+                item.get("opb", ""),
+                item.get("opc", ""),
+                item.get("opd", ""),
+            ]
+
+            # Format as MCQ
+            choice_labels = ["A", "B", "C", "D"]
+            formatted_choices = "\n".join([
+                f"{choice_labels[i]}. {choice}"
+                for i, choice in enumerate(choices) if choice
+            ])
+
+            full_question = f"{question}\n\nChoices:\n{formatted_choices}"
+
+            # Answer is index 0-3, map to A-D
+            correct_idx = item.get("cop", 0)  # cop = correct option (0-indexed)
+            answer = choice_labels[correct_idx] if correct_idx < 4 else "A"
+
+            data.append({
+                "question": full_question,
+                "answer": answer,
+                "solution": item.get("exp", ""),  # explanation if available
+                "choices": choices,
+                "correct_idx": correct_idx,
+                "subject": item.get("subject_name", ""),
+                "topic": item.get("topic_name", ""),
+            })
+
+        return cls(data, max_samples=max_samples, shuffle=shuffle)
+
+    @classmethod
     def from_json(
         cls,
         path: str,
@@ -222,7 +433,7 @@ def create_dataloaders(
         )
         test_dataset = ReasoningDataset.from_gsm8k(
             split="test",
-            max_samples=int(num_samples * 0.1),
+            max_samples=int(num_samples * 0.1) if num_samples else None,
         )
     elif dataset_name == "math":
         full_dataset = ReasoningDataset.from_math(
@@ -231,7 +442,7 @@ def create_dataloaders(
         )
         test_dataset = ReasoningDataset.from_math(
             split="test",
-            max_samples=int(num_samples * 0.1),
+            max_samples=int(num_samples * 0.1) if num_samples else None,
         )
     elif dataset_name == "math_qwedsacf":
         # Use qwedsacf/competition_math with 80:20 train:test split
@@ -247,8 +458,44 @@ def create_dataloaders(
             use_qwedsacf=True,
             train_test_split=0.8,
         )
+    elif dataset_name == "aime":
+        full_dataset = ReasoningDataset.from_aime(
+            split="train",
+            max_samples=num_samples,
+            train_test_split=0.8,
+        )
+        test_dataset = ReasoningDataset.from_aime(
+            split="test",
+            max_samples=int(num_samples * 0.1) if num_samples else None,
+            train_test_split=0.8,
+        )
+    elif dataset_name.startswith("gpqa"):
+        # Support gpqa, gpqa_diamond, gpqa_extended, gpqa_main
+        difficulty = "diamond"  # default
+        if "_" in dataset_name:
+            difficulty = dataset_name.split("_")[1]
+        full_dataset = ReasoningDataset.from_gpqa(
+            split="train",
+            max_samples=num_samples,
+            difficulty=difficulty,
+        )
+        test_dataset = ReasoningDataset.from_gpqa(
+            split="test",
+            max_samples=int(num_samples * 0.1) if num_samples else None,
+            difficulty=difficulty,
+        )
+    elif dataset_name == "medmcqa":
+        full_dataset = ReasoningDataset.from_medmcqa(
+            split="train",
+            max_samples=num_samples,
+        )
+        # MedMCQA has actual validation split
+        test_dataset = ReasoningDataset.from_medmcqa(
+            split="validation",
+            max_samples=int(num_samples * 0.1) if num_samples else None,
+        )
     else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
+        raise ValueError(f"Unknown dataset: {dataset_name}. Supported: gsm8k, math, math_qwedsacf, aime, gpqa, gpqa_diamond, gpqa_extended, gpqa_main, medmcqa")
 
     # Split train and validation
     total = len(full_dataset)
