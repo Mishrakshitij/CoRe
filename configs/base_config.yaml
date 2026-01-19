@@ -27,6 +27,10 @@ models:
       name: "ministral/Ministral-3b-instruct"
       type: "mistral"
       size: "3B"
+    phi4_reasoning:
+      name: "microsoft/Phi-4-reasoning"
+      type: "phi"
+      size: "14B"
 
 # Default training configuration
 training:

@@ -1,0 +1,171 @@
+# GRPO AIME Training Config for Phi-4-reasoning-plus + Qwen3-4B with QLoRA
+# =========================================================================
+# Collaborative training with microsoft/Phi-4-reasoning-plus (14B, 4-bit) and Qwen3-4B
+# Uses QLoRA (4-bit quantization) for memory efficiency
+# Designed for 2x A100-80GB GPUs
+
+project:
+  name: "collab_reasoning_aime_phi4_qlora"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations
+models:
+  available:
+    phi4_reasoning_plus:
+      name: "microsoft/Phi-4-reasoning-plus"
+      type: "phi"
+      size: "14B"
+    qwen3_4b:
+      name: "Qwen/Qwen3-4B-Instruct-2507"
+      type: "qwen"
+      size: "4B"
+
+# Training configuration with QLoRA
+training:
+  # Data
+  dataset: "aime"
+  num_samples: -1  # Use all train samples
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+  # Epochs
+  num_epochs: 2
+
+  # Batch settings - can use larger batch with QLoRA
+  batch_size: 1
+  gradient_accumulation_steps: 8  # Effective batch size = 8
+
+  # Optimizer - lower LR for larger model
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # QLoRA settings - 4-bit quantization
+  use_qlora: true
+  qlora_bits: 4
+
+  # LoRA settings - increased rank for 14B model
+  use_lora: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing - more frequent for expensive training
+  save_steps: 100
+  eval_steps: 50
+  logging_steps: 25
+
+# GRPO specific settings
+policy_optimization:
+  algorithm: "grpo"
+  importance_sampling_level: "sequence"
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 2
+  K_prime: 1
+
+  # KL regularization
+  beta: 0.04
+
+  # Clipping
+  epsilon: 0.0003
+  epsilon_high: 0.0004
+
+  # SAPO temperatures
+  tau_pos: 1.0
+  tau_neg: 1.05
+  tau_rescue: 0.8
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2 (annealed)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+# Collaboration settings
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+# Distance/Similarity metrics
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+# Generation settings - longer for AIME complex problems
+generation:
+  max_new_tokens: 1024
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting settings
+prompting:
+  multi_strategy: true
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+# Counterfactual regularization
+counterfactual:
+  enabled: true
+  probability: 0.2
+  lambda_cf: 0.3
+  perturbation_types: ["numeric", "condition"]
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 4
+  generate_traces_for_eval: true

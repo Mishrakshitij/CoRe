@@ -14,8 +14,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     get_scheduler,
+    BitsAndBytesConfig,
 )
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import logging
@@ -144,7 +145,7 @@ class BaseCollabTrainer:
         use_lora: bool = True,
     ) -> Tuple[nn.Module, Any]:
         """
-        Load a model with optional LoRA.
+        Load a model with optional LoRA or QLoRA (4-bit quantization).
 
         Args:
             model_name: HuggingFace model name
@@ -156,6 +157,10 @@ class BaseCollabTrainer:
         """
         logger.info(f"Loading model {model_id}: {model_name}")
 
+        # Check if using QLoRA (4-bit quantization)
+        use_qlora = self.config["training"].get("use_qlora", False)
+        qlora_bits = self.config["training"].get("qlora_bits", 4)
+
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
@@ -165,13 +170,31 @@ class BaseCollabTrainer:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        # Prepare quantization config if using QLoRA
+        quantization_config = None
+        if use_qlora:
+            logger.info(f"Using QLoRA with {qlora_bits}-bit quantization for {model_id}")
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=(qlora_bits == 4),
+                load_in_8bit=(qlora_bits == 8),
+                bnb_4bit_compute_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+
         # Load model
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
             trust_remote_code=True,
             device_map="auto",
+            quantization_config=quantization_config,
         )
+
+        # Prepare model for k-bit training if using QLoRA
+        if use_qlora:
+            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+            logger.info(f"Model prepared for {qlora_bits}-bit training")
 
         # Apply LoRA if enabled
         if use_lora and self.config["training"]["use_lora"]:
@@ -184,6 +207,12 @@ class BaseCollabTrainer:
             )
             model = get_peft_model(model, lora_config)
             model.print_trainable_parameters()
+
+        # Enable gradient checkpointing for memory efficiency (important for large models)
+        # Skip if already enabled by prepare_model_for_kbit_training
+        if not use_qlora and hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            logger.info(f"Gradient checkpointing enabled for {model_id} (use_reentrant=False)")
 
         return model, tokenizer
 
@@ -371,12 +400,37 @@ class BaseCollabTrainer:
             max_length=1024,
         )
 
-        # Forward pass
-        with torch.set_grad_enabled(model.training):
-            outputs = model(
-                input_ids=encodings["input_ids"],
-                attention_mask=encodings["attention_mask"],
-            )
+        # Forward pass - Use input_ids directly for proper gradient flow to LoRA params
+        # Note: The warning "None of the inputs have requires_grad=True" may appear with
+        # frozen embedding layers + gradient checkpointing, but gradients still flow
+        # correctly to LoRA parameters because they are applied after the embedding layer.
+        #
+        # The actual RuntimeError happens because gradient checkpointing tries to compute
+        # gradients but finds no tensor to backprop through. The solution is to skip
+        # gradient checkpointing for the log_probs computation and rely on normal autograd.
+        if model.training:
+            # Temporarily disable gradient checkpointing for this forward pass
+            # to avoid the "element 0 of tensors does not require grad" error.
+            # Gradients will still flow through LoRA params normally.
+            was_checkpointing = getattr(model, 'gradient_checkpointing', False)
+            if was_checkpointing and hasattr(model, 'gradient_checkpointing_disable'):
+                model.gradient_checkpointing_disable()
+
+            try:
+                outputs = model(
+                    input_ids=encodings["input_ids"],
+                    attention_mask=encodings["attention_mask"],
+                )
+            finally:
+                # Re-enable gradient checkpointing if it was enabled
+                if was_checkpointing and hasattr(model, 'gradient_checkpointing_enable'):
+                    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        else:
+            with torch.no_grad():
+                outputs = model(
+                    input_ids=encodings["input_ids"],
+                    attention_mask=encodings["attention_mask"],
+                )
 
         logits = outputs.logits
 
