@@ -101,16 +101,10 @@ def main():
         help="Batch size for generation (larger = faster but more memory)",
     )
     parser.add_argument(
-        "--model1",
+        "--resume",
         type=str,
         default=None,
-        help="Model 1 key from config (e.g., phi4_reasoning, qwen2_5_3b)",
-    )
-    parser.add_argument(
-        "--model2",
-        type=str,
-        default=None,
-        help="Model 2 key from config (e.g., qwen3_4b)",
+        help="Path to checkpoint directory to resume training from",
     )
 
     args = parser.parse_args()
@@ -139,9 +133,13 @@ def main():
     num_samples = config["training"]["num_samples"]
     experiment_name = f"fast_{algorithm}_{num_samples}samples_{timestamp}"
 
-    # Setup output directory
-    output_dir = Path(config["project"]["output_dir"]) / experiment_name
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Setup output directory (use checkpoint parent if resuming)
+    if args.resume:
+        output_dir = Path(args.resume).parent
+        logger.info(f"Resuming from checkpoint: {args.resume}")
+    else:
+        output_dir = Path(config["project"]["output_dir"]) / experiment_name
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save config
     with open(output_dir / "config.yaml", "w") as f:
@@ -160,22 +158,11 @@ def main():
         config["use_wandb"] = True
         setup_wandb(config, experiment_name)
 
-    # Get model configs - use CLI args or fall back to defaults
-    model1_key = args.model1 if args.model1 else "qwen2_5_3b"
-    model2_key = args.model2 if args.model2 else "qwen3_4b"
-
-    # Validate model keys exist in config
-    available_models = config["models"]["available"]
-    if model1_key not in available_models:
-        raise ValueError(f"Model '{model1_key}' not found in config. Available: {list(available_models.keys())}")
-    if model2_key not in available_models:
-        raise ValueError(f"Model '{model2_key}' not found in config. Available: {list(available_models.keys())}")
-
+    # Get model configs
     model_configs = [
-        available_models[model1_key],
-        available_models[model2_key],
+        config["models"]["available"]["qwen2_5_3b"],
+        config["models"]["available"]["qwen3_4b"],
     ]
-    logger.info(f"Using models: M1={model1_key}, M2={model2_key}")
 
     logger.info(f"Models:")
     for i, mc in enumerate(model_configs):
@@ -201,6 +188,12 @@ def main():
         output_dir=str(output_dir),
         use_compile=not args.no_compile,
     )
+
+    # Load checkpoint if resuming
+    if args.resume:
+        logger.info(f"Loading checkpoint from {args.resume}")
+        trainer.load_checkpoint(args.resume)
+        logger.info(f"Resuming from epoch {trainer.state.epoch}, step {trainer.state.global_step}")
 
     # Start training
     logger.info("Starting fast training...")

@@ -14,9 +14,17 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     get_scheduler,
-    BitsAndBytesConfig,
 )
-from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
+
+# Mistral-3 models require transformers>=5.0.0 and use special model classes
+# These imports will fail gracefully on older transformers versions
+try:
+    from transformers import Mistral3ForConditionalGeneration
+    MISTRAL3_AVAILABLE = True
+except ImportError:
+    MISTRAL3_AVAILABLE = False
+
+from peft import get_peft_model, LoraConfig, TaskType
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import logging
@@ -35,6 +43,81 @@ from ..data.preprocessing import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def is_mistral3_model(model_name: str) -> bool:
+    """
+    Check if model is a Mistral-3 reasoning model that requires special handling.
+
+    Mistral-3 models use Mistral3ForConditionalGeneration instead of AutoModelForCausalLM
+    and require transformers>=5.0.0.
+
+    Args:
+        model_name: HuggingFace model name
+
+    Returns:
+        True if model is a Mistral-3 reasoning model
+    """
+    mistral3_patterns = [
+        "Ministral-3",
+        "ministral-3",
+        "Mistral-3",
+        "mistral-3",
+    ]
+    return any(pattern in model_name for pattern in mistral3_patterns)
+
+
+def build_device_map_for_gpus(model_name: str, gpu_ids: List[int]) -> dict:
+    """
+    Build a device_map that distributes model layers across specified GPUs.
+
+    Args:
+        model_name: HuggingFace model name
+        gpu_ids: List of GPU IDs to use (e.g., [0, 1] or [2, 3])
+
+    Returns:
+        device_map dict mapping model layers to specific GPUs
+    """
+    from transformers import AutoConfig
+
+    logger.info(f"Building device map for {model_name} on GPUs {gpu_ids}")
+
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    num_layers = config.num_hidden_layers
+    num_gpus = len(gpu_ids)
+
+    # Calculate layers per GPU
+    layers_per_gpu = num_layers // num_gpus
+    extra_layers = num_layers % num_gpus
+
+    device_map = {}
+
+    # Embedding on first GPU
+    device_map["model.embed_tokens"] = gpu_ids[0]
+
+    # Distribute transformer layers across GPUs
+    layer_idx = 0
+    for i, gpu_id in enumerate(gpu_ids):
+        # Add extra layers to first GPUs
+        n_layers = layers_per_gpu + (1 if i < extra_layers else 0)
+        for _ in range(n_layers):
+            device_map[f"model.layers.{layer_idx}"] = gpu_id
+            layer_idx += 1
+
+    # Final norm and lm_head on last GPU
+    device_map["model.norm"] = gpu_ids[-1]
+    device_map["lm_head"] = gpu_ids[-1]
+
+    # Rotary embedding if present (Qwen models)
+    if hasattr(config, "rope_scaling") or "qwen" in model_name.lower():
+        device_map["model.rotary_emb"] = gpu_ids[0]
+
+    logger.info(f"Device map created: {len(device_map)} components across GPUs {gpu_ids}")
+    logger.info(f"  Layers 0-{layers_per_gpu-1 + (1 if extra_layers > 0 else 0)} on GPU {gpu_ids[0]}")
+    if num_gpus > 1:
+        logger.info(f"  Layers {layer_idx - layers_per_gpu}-{layer_idx-1} on GPU {gpu_ids[-1]}")
+
+    return device_map
 
 
 @dataclass
@@ -145,7 +228,7 @@ class BaseCollabTrainer:
         use_lora: bool = True,
     ) -> Tuple[nn.Module, Any]:
         """
-        Load a model with optional LoRA or QLoRA (4-bit quantization).
+        Load a model with optional LoRA and custom GPU assignment.
 
         Args:
             model_name: HuggingFace model name
@@ -157,9 +240,9 @@ class BaseCollabTrainer:
         """
         logger.info(f"Loading model {model_id}: {model_name}")
 
-        # Check if using QLoRA (4-bit quantization)
-        use_qlora = self.config["training"].get("use_qlora", False)
-        qlora_bits = self.config["training"].get("qlora_bits", 4)
+        # Check for custom GPU mapping in config
+        gpu_mapping = self.config.get("training", {}).get("model_gpu_mapping", {})
+        gpu_ids = gpu_mapping.get(model_id, None)
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -170,31 +253,36 @@ class BaseCollabTrainer:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        # Prepare quantization config if using QLoRA
-        quantization_config = None
-        if use_qlora:
-            logger.info(f"Using QLoRA with {qlora_bits}-bit quantization for {model_id}")
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=(qlora_bits == 4),
-                load_in_8bit=(qlora_bits == 8),
-                bnb_4bit_compute_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
+        # Determine device_map based on config
+        if gpu_ids:
+            logger.info(f"Using custom GPU mapping for {model_id}: GPUs {gpu_ids}")
+            device_map = build_device_map_for_gpus(model_name, gpu_ids)
+        else:
+            device_map = "auto"
+
+        # Check if this is a Mistral-3 model requiring special handling
+        use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
+
+        if use_mistral3:
+            logger.info(f"Using Mistral3ForConditionalGeneration for {model_name}")
+            model = Mistral3ForConditionalGeneration.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                trust_remote_code=True,
+                device_map=device_map,
             )
-
-        # Load model
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-            trust_remote_code=True,
-            device_map="auto",
-            quantization_config=quantization_config,
-        )
-
-        # Prepare model for k-bit training if using QLoRA
-        if use_qlora:
-            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
-            logger.info(f"Model prepared for {qlora_bits}-bit training")
+        else:
+            if is_mistral3_model(model_name) and not MISTRAL3_AVAILABLE:
+                logger.warning(
+                    f"Mistral-3 model detected but Mistral3ForConditionalGeneration not available. "
+                    f"Requires transformers>=5.0.0. Falling back to AutoModelForCausalLM."
+                )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                trust_remote_code=True,
+                device_map=device_map,
+            )
 
         # Apply LoRA if enabled
         if use_lora and self.config["training"]["use_lora"]:
@@ -208,16 +296,13 @@ class BaseCollabTrainer:
             model = get_peft_model(model, lora_config)
             model.print_trainable_parameters()
 
-        # Enable gradient checkpointing for memory efficiency (important for large models)
-        # Skip if already enabled by prepare_model_for_kbit_training
-        if not use_qlora and hasattr(model, 'gradient_checkpointing_enable'):
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-            logger.info(f"Gradient checkpointing enabled for {model_id} (use_reentrant=False)")
-
         return model, tokenizer
 
     def load_all_models(self):
         """Load all models specified in config."""
+        # Check for custom GPU mapping
+        gpu_mapping = self.config.get("training", {}).get("model_gpu_mapping", {})
+
         for i, model_config in enumerate(self.model_configs):
             model_id = f"M{i+1}"
             model_name = model_config["name"]
@@ -227,13 +312,30 @@ class BaseCollabTrainer:
             self.models[model_id] = model
             self.tokenizers[model_id] = tokenizer
 
+            # Determine device_map for reference model (same as main model)
+            gpu_ids = gpu_mapping.get(model_id, None)
+            if gpu_ids:
+                ref_device_map = build_device_map_for_gpus(model_name, gpu_ids)
+            else:
+                ref_device_map = "auto"
+
             # Create reference model (frozen copy)
-            ref_model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-                trust_remote_code=True,
-                device_map="auto",
-            )
+            # Use Mistral3 class if applicable
+            use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
+            if use_mistral3:
+                ref_model = Mistral3ForConditionalGeneration.from_pretrained(
+                    model_name,
+                    torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                    trust_remote_code=True,
+                    device_map=ref_device_map,
+                )
+            else:
+                ref_model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                    trust_remote_code=True,
+                    device_map=ref_device_map,
+                )
             ref_model.eval()
             for param in ref_model.parameters():
                 param.requires_grad = False
@@ -400,37 +502,12 @@ class BaseCollabTrainer:
             max_length=1024,
         )
 
-        # Forward pass - Use input_ids directly for proper gradient flow to LoRA params
-        # Note: The warning "None of the inputs have requires_grad=True" may appear with
-        # frozen embedding layers + gradient checkpointing, but gradients still flow
-        # correctly to LoRA parameters because they are applied after the embedding layer.
-        #
-        # The actual RuntimeError happens because gradient checkpointing tries to compute
-        # gradients but finds no tensor to backprop through. The solution is to skip
-        # gradient checkpointing for the log_probs computation and rely on normal autograd.
-        if model.training:
-            # Temporarily disable gradient checkpointing for this forward pass
-            # to avoid the "element 0 of tensors does not require grad" error.
-            # Gradients will still flow through LoRA params normally.
-            was_checkpointing = getattr(model, 'gradient_checkpointing', False)
-            if was_checkpointing and hasattr(model, 'gradient_checkpointing_disable'):
-                model.gradient_checkpointing_disable()
-
-            try:
-                outputs = model(
-                    input_ids=encodings["input_ids"],
-                    attention_mask=encodings["attention_mask"],
-                )
-            finally:
-                # Re-enable gradient checkpointing if it was enabled
-                if was_checkpointing and hasattr(model, 'gradient_checkpointing_enable'):
-                    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-        else:
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=encodings["input_ids"],
-                    attention_mask=encodings["attention_mask"],
-                )
+        # Forward pass
+        with torch.set_grad_enabled(model.training):
+            outputs = model(
+                input_ids=encodings["input_ids"],
+                attention_mask=encodings["attention_mask"],
+            )
 
         logits = outputs.logits
 

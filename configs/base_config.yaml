@@ -27,6 +27,15 @@ models:
       name: "ministral/Ministral-3b-instruct"
       type: "mistral"
       size: "3B"
+    # Mistral-3 Reasoning Models (require transformers>=5.0.0)
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+    ministral_8b_reasoning:
+      name: "mistralai/Ministral-3-8B-Reasoning-2512"
+      type: "mistral3"
+      size: "8B"
     phi4_reasoning:
       name: "microsoft/Phi-4-reasoning"
       type: "phi"

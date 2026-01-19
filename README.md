@@ -35,6 +35,40 @@ This project implements **Collaborative Reasoning** where multiple models (M1, M
 | **SAPO** | Soft Adaptive Policy Optimization (soft gating) | Sample efficiency |
 | **Hybrid** | GSPO + SAPO combination | Collaborative training |
 
+### Supported Models
+
+| Model Key | Model Name | Type | Size | Notes |
+|-----------|------------|------|------|-------|
+| `qwen2_5_3b` | Qwen/Qwen2.5-3B-Instruct | qwen | 3B | Standard |
+| `qwen3_4b` | Qwen/Qwen3-4B-Instruct-2507 | qwen | 4B | Standard |
+| `llama3_2_3b` | meta-llama/Llama-3.2-3B-Instruct | llama | 3B | Standard |
+| `ministral_3b` | ministral/Ministral-3b-instruct | mistral | 3B | Standard |
+| `ministral_3b_reasoning` | mistralai/Ministral-3-3B-Reasoning-2512 | mistral3 | 3B | **Requires transformers>=5.0.0** |
+| `ministral_8b_reasoning` | mistralai/Ministral-3-8B-Reasoning-2512 | mistral3 | 8B | **Requires transformers>=5.0.0** |
+| `phi4_reasoning` | microsoft/Phi-4-reasoning | phi | 14B | QLoRA recommended |
+
+**Mistral-3 Reasoning Models:**
+The Ministral reasoning models use `Mistral3ForConditionalGeneration` which requires transformers 5.0.0+. Set up a separate conda environment:
+
+```bash
+# Create environment for Mistral-3 models
+conda create -n mistral_env python=3.11 -y
+conda activate mistral_env
+
+pip install transformers==5.0.0rc0
+pip install mistral-common>=1.8.6
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install accelerate peft datasets wandb tqdm PyYAML
+
+# Train with Mistral reasoning models
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
+  --config configs/grpo_gpqa_mistral.yaml \
+  --algorithm grpo \
+  --model1 ministral_3b_reasoning \
+  --model2 ministral_8b_reasoning \
+  --no-compile
+```
+
 ### Supported Datasets
 
 | Dataset | Domain | Answer Format | Notes |

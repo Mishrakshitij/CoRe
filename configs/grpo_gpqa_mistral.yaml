@@ -1,0 +1,168 @@
+# GRPO Training on GPQA Main with Mistral-3 Reasoning Models
+# ============================================================
+# M1 (Ministral-3B-Reasoning) on GPUs 0-1, M2 (Ministral-8B-Reasoning) on GPUs 2-3
+# Requires transformers>=5.0.0 (mistral_env conda environment)
+
+project:
+  name: "collab_reasoning_grpo_gpqa_mistral"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations
+models:
+  available:
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+    ministral_8b_reasoning:
+      name: "mistralai/Ministral-3-8B-Reasoning-2512"
+      type: "mistral3"
+      size: "8B"
+
+training:
+  # GPQA main dataset with 80:20 train:test split
+  dataset: "gpqa_main"
+  num_samples: -1     # Use all available (~358 train from 80:20 split)
+  train_split: 1.0    # Use full train portion
+  val_split: 0.0      # No validation split
+  test_split: 0.0     # Test handled separately
+
+  # Training epochs
+  num_epochs: 5
+
+  # Batch settings - conservative for larger 8B model
+  batch_size: 1
+  gradient_accumulation_steps: 4  # Effective batch size = 4
+
+  # Model parallelism: split models across GPU groups
+  # M1 (3B, ~16GB) on GPUs 0-1, M2 (8B, ~24GB) on GPUs 2-3
+  model_gpu_mapping:
+    M1: [0, 1]    # Ministral-3B-Reasoning on GPUs 0-1
+    M2: [2, 3]    # Ministral-8B-Reasoning on GPUs 2-3
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # LoRA settings - Mistral models use standard q/k/v/o projection naming
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 25
+  eval_steps: 25
+  logging_steps: 5
+
+# GRPO algorithm configuration
+policy_optimization:
+  algorithm: "grpo"
+
+  # Importance sampling at token level for GRPO
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 2        # Cold generation traces
+  K_prime: 1  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # GRPO clipping (standard epsilon)
+  epsilon: 0.2
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1 (explore more)
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2+ (exploit more)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+# Collaboration settings
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+# Distance/Similarity metrics
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+# Generation settings - GPQA needs longer responses for science reasoning
+generation:
+  max_new_tokens: 1024
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting - enable multi-strategy for reasoning models
+prompting:
+  multi_strategy: true
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+# Counterfactual regularization
+counterfactual:
+  enabled: false  # Disabled for faster training
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 8
+  generate_traces_for_eval: true
+
+# Fast training settings
+fast_training:
+  gen_batch_size: 2
