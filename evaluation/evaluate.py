@@ -309,7 +309,7 @@ def main():
         "--dataset",
         type=str,
         default="gsm8k",
-        choices=["gsm8k", "math"],
+        choices=["gsm8k", "math", "aime", "gpqa", "gpqa_diamond", "gpqa_main", "gpqa_extended"],
         help="Dataset to evaluate on",
     )
     parser.add_argument(
@@ -354,6 +354,11 @@ def main():
     logger.info(f"Loading {args.dataset} {args.split} split...")
     if args.dataset == "gsm8k":
         dataset = ReasoningDataset.from_gsm8k(split=args.split)
+    elif args.dataset == "aime":
+        dataset = ReasoningDataset.from_aime(split=args.split)
+    elif args.dataset.startswith("gpqa"):
+        difficulty = args.dataset.split("_")[1] if "_" in args.dataset else "diamond"
+        dataset = ReasoningDataset.from_gpqa(split=args.split, difficulty=difficulty)
     else:
         dataset = ReasoningDataset.from_math(split=args.split)
 

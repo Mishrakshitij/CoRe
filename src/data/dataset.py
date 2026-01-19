@@ -163,10 +163,10 @@ class ReasoningDataset(Dataset):
         max_samples: int = None,
         train_test_split: float = 0.8,
         shuffle: bool = True,
-        use_full_dataset: bool = True,  # Use TianHongZXY/aime-1983-2025 (963 samples)
     ) -> "ReasoningDataset":
         """Load AIME dataset from HuggingFace.
 
+        Uses TianHongZXY/aime-1983-2025 dataset (cached locally).
         AIME answers are integers from 000 to 999.
 
         Args:
@@ -174,78 +174,34 @@ class ReasoningDataset(Dataset):
             max_samples: Maximum samples to load
             train_test_split: Train ratio (default 0.8 = 80:20)
             shuffle: Whether to shuffle data
-            use_full_dataset: If True, use TianHongZXY/aime-1983-2025 (963 samples)
-                              If False, use AI-MO/aimo-validation-aime (90 samples)
         """
-        if use_full_dataset:
-            logger.info(f"Loading AIME dataset from TianHongZXY/aime-1983-2025 {split} split...")
-            # TianHongZXY/aime-1983-2025 has 963 samples in test split
-            full_dataset = load_dataset("TianHongZXY/aime-1983-2025", split="test")
+        logger.info(f"Loading AIME dataset {split} split...")
 
-            # Split into train/test from the test split
-            total_samples = len(full_dataset)
-            train_size = int(total_samples * train_test_split)
+        # Load from HuggingFace - TianHongZXY/aime-1983-2025 only has "test" split
+        full_dataset = load_dataset("TianHongZXY/aime-1983-2025", split="test")
 
-            if split == "train":
-                dataset = full_dataset.select(range(train_size))
-            else:  # test
-                dataset = full_dataset.select(range(train_size, total_samples))
+        # Split into train/test (manual split since HF only has "test")
+        total_samples = len(full_dataset)
+        train_size = int(total_samples * train_test_split)
 
-            logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
+        if split == "train":
+            dataset = full_dataset.select(range(train_size))
+        else:  # test
+            dataset = full_dataset.select(range(train_size, total_samples))
 
-            data = []
-            for item in dataset:
-                # TianHongZXY format: problem, answer
-                question = item.get("problem", "")
-                answer = str(item.get("answer", ""))
+        logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
 
-                # Normalize answer (AIME format - integer 0-999)
-                try:
-                    answer_int = int(answer)
-                    # Don't zero-pad for this dataset - answers are already clean
-                except ValueError:
-                    pass
+        data = []
+        for item in dataset:
+            # TianHongZXY format: problem, answer fields
+            question = item.get("problem", "")
+            answer = str(item.get("answer", "")).strip()
 
-                data.append({
-                    "question": question,
-                    "answer": answer,
-                    "solution": "",
-                })
-        else:
-            logger.info(f"Loading AIME dataset from AI-MO/aimo-validation-aime {split} split...")
-            # AI-MO/aimo-validation-aime has 90 samples in train split
-            full_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
-
-            # Split into train/test
-            total_samples = len(full_dataset)
-            train_size = int(total_samples * train_test_split)
-
-            if split == "train":
-                dataset = full_dataset.select(range(train_size))
-            else:  # test
-                dataset = full_dataset.select(range(train_size, total_samples))
-
-            logger.info(f"Split: {split}, samples: {len(dataset)} (total: {total_samples})")
-
-            data = []
-            for item in dataset:
-                # AI-MO format: problem, solution, answer fields
-                question = item.get("problem", "")
-                answer = str(item.get("answer", ""))
-
-                # Normalize answer to 3 digits (AIME format)
-                try:
-                    answer_int = int(answer)
-                    answer = f"{answer_int:03d}"  # Zero-pad to 3 digits
-                except ValueError:
-                    pass
-
-                data.append({
-                    "question": question,
-                    "answer": answer,
-                    "solution": item.get("solution", ""),
-                    "url": item.get("url", ""),
-                })
+            data.append({
+                "question": question,
+                "answer": answer,
+                "solution": "",  # AIME doesn't provide solutions
+            })
 
         return cls(data, max_samples=max_samples, shuffle=shuffle)
 

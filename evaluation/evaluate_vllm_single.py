@@ -251,6 +251,12 @@ def main():
     logger.info(f"Loading {args.dataset} {args.split} split...")
     if args.dataset == "gsm8k":
         dataset = ReasoningDataset.from_gsm8k(split=args.split, shuffle=False)
+    elif args.dataset == "aime":
+        dataset = ReasoningDataset.from_aime(split=args.split, shuffle=False)
+    elif args.dataset.startswith("gpqa"):
+        # Support gpqa, gpqa_diamond, gpqa_extended, gpqa_main
+        difficulty = args.dataset.split("_")[1] if "_" in args.dataset else "diamond"
+        dataset = ReasoningDataset.from_gpqa(split=args.split, difficulty=difficulty, shuffle=False)
     else:
         # Use qwedsacf/competition_math (cached locally) with 80:20 split
         dataset = ReasoningDataset.from_math(split=args.split, use_qwedsacf=True, shuffle=False)
