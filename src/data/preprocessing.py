@@ -466,3 +466,126 @@ def extract_strategy_blocks(text: str) -> List[Dict]:
         })
 
     return strategies
+
+
+def is_mistral3_model(model_name: str) -> bool:
+    """Check if model is a Mistral-3 reasoning model."""
+    mistral3_patterns = ["Ministral-3", "ministral-3", "Mistral-3", "mistral-3"]
+    return any(pattern in model_name for pattern in mistral3_patterns)
+
+
+def extract_think_content(text: str) -> Optional[str]:
+    """
+    Extract content from [THINK]...[/THINK] blocks in Mistral reasoning output.
+
+    Args:
+        text: Model response text
+
+    Returns:
+        Content between [THINK] and [/THINK] tags, or None if not found
+    """
+    # Pattern to match [THINK]...[/THINK] with optional whitespace
+    pattern = r'\[THINK\](.*?)\[/THINK\]'
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def get_text_after_think(text: str) -> str:
+    """
+    Get text content after [/THINK] tag for answer extraction.
+
+    For Mistral reasoning models, the actual answer comes after the thinking block.
+
+    Args:
+        text: Model response text
+
+    Returns:
+        Text after [/THINK] or original text if no think block found
+    """
+    pattern = r'\[/THINK\](.*)$'
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+# GPQA multi-strategy prompt with XML format for Mistral chat template
+GPQA_MISTRAL_XML_FORMAT = """Format your response as:
+<strategy id="1">
+<approach>Your approach name</approach>
+<reasoning>Your detailed reasoning</reasoning>
+<result>Letter answer (A, B, C, or D)</result>
+</strategy>
+
+<final_answer>Your final letter answer (A, B, C, or D)</final_answer>"""
+
+
+def format_mistral3_prompt(
+    question: str,
+    tokenizer,
+    dataset: str = "gpqa",
+    multi_strategy: bool = True,
+) -> str:
+    """
+    Format prompt for Mistral-3 reasoning models using chat template.
+
+    Mistral-3 reasoning models expect:
+    - System message about thinking process (triggers [THINK] generation)
+    - User message with the question and XML format request
+    - Model generates [THINK]...[/THINK] followed by XML-formatted response
+
+    Args:
+        question: The question to solve
+        tokenizer: Mistral tokenizer with chat template
+        dataset: Dataset type for appropriate system message
+        multi_strategy: If True, request multi-strategy XML format
+
+    Returns:
+        Formatted prompt using chat template
+    """
+    # System message for Mistral reasoning - triggers [THINK] format
+    if dataset.lower() in ["gpqa", "gpqa_main", "gpqa_diamond"]:
+        system_message = """You are an expert scientist solving graduate-level science questions.
+
+Think through the problem step by step using your reasoning capabilities. Consider:
+- Relevant scientific principles and equations
+- Multiple approaches to verify your answer
+- Process of elimination for multiple choice"""
+    elif dataset.lower() in ["aime", "math", "math_qwedsacf"]:
+        system_message = """You are an expert mathematician solving competition-level problems.
+
+Think through the problem step by step. Consider multiple approaches and verify your reasoning."""
+    else:
+        system_message = """You are an expert problem solver.
+
+Think through the problem step by step. Show your reasoning clearly."""
+
+    # Build user message with question and optional XML format
+    if multi_strategy:
+        user_message = f"""{question}
+
+{GPQA_MISTRAL_XML_FORMAT}"""
+    else:
+        user_message = question
+
+    # Build messages for chat template
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message}
+    ]
+
+    # Use tokenizer's chat template
+    try:
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        return prompt
+    except Exception as e:
+        # Fallback to simple format if chat template fails
+        return f"{system_message}\n\n{user_message}\n\nLet me think through this step by step:"
