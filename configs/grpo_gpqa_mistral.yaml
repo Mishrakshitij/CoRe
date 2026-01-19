@@ -33,9 +33,9 @@ training:
   # Training epochs
   num_epochs: 5
 
-  # Batch settings - conservative for larger 8B model
-  batch_size: 1
-  gradient_accumulation_steps: 4  # Effective batch size = 4
+  # Batch settings - batch_size=2 with LoRA fits comfortably
+  batch_size: 2
+  gradient_accumulation_steps: 4  # Effective batch size = 8
 
   # Model parallelism: split models across GPU groups
   # M1 (3B, ~16GB) on GPUs 0-1, M2 (8B, ~24GB) on GPUs 2-3
@@ -115,6 +115,10 @@ rewards:
   # Rescue bonus
   r_teach: 0.15
 
+  # [THINK] reward for Mistral reasoning models (optional)
+  use_think_reward: false  # Enable via --think-reward CLI flag
+  w_think: 0.1             # Weight for [THINK] diversity reward
+
 # Collaboration settings
 collaboration:
   num_models: 2
@@ -147,6 +151,7 @@ generation:
 # Prompting - enable multi-strategy for reasoning models
 prompting:
   multi_strategy: true
+  template_type: "mistral-chat"  # Use apply_chat_template() for Mistral-3 models
   ms_w_correct: 2.0
   ms_w_diversity: 0.5
   ms_w_consistency: 1.5

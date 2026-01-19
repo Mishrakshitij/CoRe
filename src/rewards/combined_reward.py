@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from .exploit_reward import ExploitReward, ExploitResult
 from .explore_reward import ExploreReward, ExploreResult
 from .cross_reward import CrossModelReward, CrossRewardResult, MultiModelCrossReward
+from .think_reward import ThinkReward, ThinkRewardResult
 
 
 @dataclass
@@ -29,6 +30,8 @@ class CombinedRewardResult:
     exploit_result: ExploitResult
     explore_result: Optional[ExploreResult] = None
     cross_result: Optional[CrossRewardResult] = None
+    think_reward: float = 0.0
+    think_result: Optional[ThinkRewardResult] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -56,6 +59,11 @@ class CombinedRewardFunction:
         # Share distance function
         self.cross_reward.set_distance_fn(self.explore_reward.compute_distance)
         self.multi_cross_reward.set_distance_fn(self.explore_reward.compute_distance)
+
+        # Think reward (optional, for Mistral reasoning models)
+        self.use_think_reward = config.get("use_think_reward", False)
+        self.think_reward_fn = ThinkReward(config) if self.use_think_reward else None
+        self.w_think = config.get("w_think", 0.1)
 
         # Weights for epoch 1
         self.w_exploit_e1 = config.get("w_exploit_e1", 1.0)
@@ -95,6 +103,7 @@ class CombinedRewardFunction:
         partner_exploit_rewards: List[float] = None,
         is_rescue: bool = False,
         round_a_had_correct: bool = True,
+        all_traces: List[str] = None,
     ) -> CombinedRewardResult:
         """
         Compute combined reward for a single trace.
@@ -109,6 +118,7 @@ class CombinedRewardFunction:
             partner_exploit_rewards: Partner exploit rewards
             is_rescue: Whether this is a rescue trace (round B after A failed)
             round_a_had_correct: Whether round A had any correct trace
+            all_traces: All traces in batch (for think reward diversity)
         """
         w_exploit, w_explore, w_cross = self.get_weights()
 
@@ -132,6 +142,13 @@ class CombinedRewardFunction:
             )
             cross_reward_val = cross_result.reward
 
+        # Think reward (optional, for Mistral reasoning models)
+        think_result = None
+        think_reward_val = 0.0
+        if self.use_think_reward and self.think_reward_fn and all_traces:
+            think_result = self.think_reward_fn(trace, all_traces)
+            think_reward_val = think_result.reward
+
         # Rescue bonus
         rescue_bonus = 0.0
         if is_rescue and not round_a_had_correct and exploit_result.is_correct:
@@ -142,6 +159,7 @@ class CombinedRewardFunction:
             w_exploit * exploit_result.reward +
             w_explore * explore_result.reward +
             w_cross * cross_reward_val +
+            think_reward_val +
             rescue_bonus
         )
 
@@ -155,12 +173,16 @@ class CombinedRewardFunction:
             exploit_result=exploit_result,
             explore_result=explore_result,
             cross_result=cross_result,
+            think_reward=think_reward_val,
+            think_result=think_result,
             metadata={
                 "w_exploit": w_exploit,
                 "w_explore": w_explore,
                 "w_cross": w_cross,
+                "w_think": self.w_think if self.use_think_reward else 0.0,
                 "epoch": self.current_epoch,
                 "is_rescue": is_rescue,
+                "use_think_reward": self.use_think_reward,
             },
         )
 
@@ -203,6 +225,11 @@ class CombinedRewardFunction:
         # Get diverse set traces
         diverse_set = [traces[i] for i in diverse_set_indices]
 
+        # Compute think rewards for all traces (if enabled)
+        think_results = None
+        if self.use_think_reward and self.think_reward_fn:
+            think_results, _ = self.think_reward_fn.batch_compute(traces)
+
         # Compute combined rewards
         results = []
         for i, (trace, exploit_res, explore_res) in enumerate(
@@ -228,6 +255,13 @@ class CombinedRewardFunction:
                 )
                 cross_reward_val = cross_result.reward
 
+            # Think reward (if enabled)
+            think_result = None
+            think_reward_val = 0.0
+            if think_results:
+                think_result = think_results[i]
+                think_reward_val = think_result.reward
+
             # Rescue bonus
             rescue_bonus = 0.0
             if is_rescue and exploit_res.is_correct:
@@ -237,6 +271,7 @@ class CombinedRewardFunction:
                 w_exploit * exploit_res.reward +
                 w_explore * explore_res.reward +
                 w_cross * cross_reward_val +
+                think_reward_val +
                 rescue_bonus
             )
 
@@ -250,9 +285,12 @@ class CombinedRewardFunction:
                 exploit_result=exploit_res,
                 explore_result=explore_res,
                 cross_result=cross_result,
+                think_reward=think_reward_val,
+                think_result=think_result,
                 metadata={
                     "trace_source": trace_sources[i] if trace_sources else "unknown",
                     "is_rescue": is_rescue,
+                    "use_think_reward": self.use_think_reward,
                 },
             ))
 

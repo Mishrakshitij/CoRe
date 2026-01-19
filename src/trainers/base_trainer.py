@@ -83,7 +83,15 @@ def build_device_map_for_gpus(model_name: str, gpu_ids: List[int]) -> dict:
     logger.info(f"Building device map for {model_name} on GPUs {gpu_ids}")
 
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    num_layers = config.num_hidden_layers
+
+    # Handle different config structures (Mistral3 has text_config)
+    if hasattr(config, 'text_config') and hasattr(config.text_config, 'num_hidden_layers'):
+        num_layers = config.text_config.num_hidden_layers
+        is_mistral3 = True
+    else:
+        num_layers = config.num_hidden_layers
+        is_mistral3 = False
+
     num_gpus = len(gpu_ids)
 
     # Calculate layers per GPU
@@ -92,8 +100,17 @@ def build_device_map_for_gpus(model_name: str, gpu_ids: List[int]) -> dict:
 
     device_map = {}
 
-    # Embedding on first GPU
-    device_map["model.embed_tokens"] = gpu_ids[0]
+    # Mistral3 uses model.language_model.* prefix, others use model.*
+    if is_mistral3:
+        device_map["model.language_model.embed_tokens"] = gpu_ids[0]
+        layer_prefix = "model.language_model.layers"
+        norm_key = "model.language_model.norm"
+        lm_head_key = "model.lm_head"
+    else:
+        device_map["model.embed_tokens"] = gpu_ids[0]
+        layer_prefix = "model.layers"
+        norm_key = "model.norm"
+        lm_head_key = "lm_head"
 
     # Distribute transformer layers across GPUs
     layer_idx = 0
@@ -101,12 +118,12 @@ def build_device_map_for_gpus(model_name: str, gpu_ids: List[int]) -> dict:
         # Add extra layers to first GPUs
         n_layers = layers_per_gpu + (1 if i < extra_layers else 0)
         for _ in range(n_layers):
-            device_map[f"model.layers.{layer_idx}"] = gpu_id
+            device_map[f"{layer_prefix}.{layer_idx}"] = gpu_id
             layer_idx += 1
 
     # Final norm and lm_head on last GPU
-    device_map["model.norm"] = gpu_ids[-1]
-    device_map["lm_head"] = gpu_ids[-1]
+    device_map[norm_key] = gpu_ids[-1]
+    device_map[lm_head_key] = gpu_ids[-1]
 
     # Rotary embedding if present (Qwen models)
     if hasattr(config, "rope_scaling") or "qwen" in model_name.lower():
@@ -253,15 +270,19 @@ class BaseCollabTrainer:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        # Check if this is a Mistral-3 model requiring special handling
+        use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
+
         # Determine device_map based on config
-        if gpu_ids:
+        # For Mistral3 (vision-language model), always use "auto" as custom mapping is complex
+        if use_mistral3:
+            logger.info(f"Mistral3 model detected, using device_map='auto' for {model_id}")
+            device_map = "auto"
+        elif gpu_ids:
             logger.info(f"Using custom GPU mapping for {model_id}: GPUs {gpu_ids}")
             device_map = build_device_map_for_gpus(model_name, gpu_ids)
         else:
             device_map = "auto"
-
-        # Check if this is a Mistral-3 model requiring special handling
-        use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
 
         if use_mistral3:
             logger.info(f"Using Mistral3ForConditionalGeneration for {model_name}")
@@ -312,20 +333,32 @@ class BaseCollabTrainer:
             self.models[model_id] = model
             self.tokenizers[model_id] = tokenizer
 
-            # Determine device_map for reference model (same as main model)
-            gpu_ids = gpu_mapping.get(model_id, None)
-            if gpu_ids:
-                ref_device_map = build_device_map_for_gpus(model_name, gpu_ids)
-            else:
-                ref_device_map = "auto"
-
-            # Create reference model (frozen copy)
-            # Use Mistral3 class if applicable
+            # Create reference model (frozen copy) for KL divergence
             use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
+
+            # Determine device_map for reference model
             if use_mistral3:
+                ref_device_map = "auto"
+            else:
+                gpu_ids = gpu_mapping.get(model_id, None)
+                if gpu_ids:
+                    ref_device_map = build_device_map_for_gpus(model_name, gpu_ids)
+                else:
+                    ref_device_map = "auto"
+
+            # For Mistral3, use 4-bit quantization for reference model to save memory
+            if use_mistral3:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+                logger.info(f"Loading reference model {model_id} with 4-bit quantization to save memory")
                 ref_model = Mistral3ForConditionalGeneration.from_pretrained(
                     model_name,
-                    torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                    quantization_config=quantization_config,
                     trust_remote_code=True,
                     device_map=ref_device_map,
                 )

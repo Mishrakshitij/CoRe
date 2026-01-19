@@ -60,14 +60,24 @@ pip install mistral-common>=1.8.6
 pip install torch --index-url https://download.pytorch.org/whl/cu121
 pip install accelerate peft datasets wandb tqdm PyYAML
 
-# Train with Mistral reasoning models
+# Train with Mistral reasoning models (basic - uses chat template)
 CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
   --config configs/grpo_gpqa_mistral.yaml \
-  --algorithm grpo \
-  --model1 ministral_3b_reasoning \
-  --model2 ministral_8b_reasoning \
+  --prompt-template mistral-chat \
+  --no-compile
+
+# Train with Mistral reasoning models (full features - with [THINK] reward)
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
+  --config configs/grpo_gpqa_mistral.yaml \
+  --prompt-template mistral-chat \
+  --think-reward \
   --no-compile
 ```
+
+**Mistral Prompt Template Options:**
+- `--prompt-template standard`: Default raw prompts (works for Qwen, Llama, etc.)
+- `--prompt-template mistral-chat`: Uses `apply_chat_template()` for Mistral-3 models to trigger `[THINK]...[/THINK]` reasoning format
+- `--think-reward`: Adds diversity reward for `[THINK]` reasoning blocks (optional, only with mistral-chat)
 
 ### Supported Datasets
 
@@ -187,6 +197,7 @@ colab_reason/
 │   │   ├── exploit_reward.py      # Correctness-based
 │   │   ├── explore_reward.py      # DPP-lite diversity
 │   │   ├── cross_reward.py        # Cross-model complementarity
+│   │   ├── think_reward.py        # [THINK] diversity (Mistral)
 │   │   └── combined_reward.py     # Combined reward function
 │   ├── trainers/                  # Training logic
 │   │   ├── base_trainer.py
@@ -270,9 +281,15 @@ R_cross(τ) = η × min_{τ'∈partner} d(τ,τ')
 Only if R_exploit(τ) ≥ quality_threshold
 ```
 
+### Think Reward (R_think) - Mistral Only
+```
+R_think(τ) = w_think × diversity([THINK] content)
+Only active with --think-reward flag for Mistral reasoning models
+```
+
 ### Combined Reward
 ```
-R(τ) = w_explt × R_exploit + w_exp × R_explore + w_cross × R_cross + rescue_bonus
+R(τ) = w_explt × R_exploit + w_exp × R_explore + w_cross × R_cross + R_think + rescue_bonus
 ```
 
 ## Evaluation

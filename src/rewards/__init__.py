@@ -16,6 +16,7 @@ from .explore_reward import ExploreReward
 from .cross_reward import CrossModelReward
 from .combined_reward import CombinedRewardFunction
 from .counterfactual import CounterfactualReward
+from .think_reward import ThinkReward, ThinkRewardResult
 from .multi_strategy_reward import (
     MultiStrategyReward,
     MultiStrategyRewardResult,
@@ -32,6 +33,9 @@ __all__ = [
     "CrossModelReward",
     "CombinedRewardFunction",
     "CounterfactualReward",
+    # Think reward for Mistral reasoning models
+    "ThinkReward",
+    "ThinkRewardResult",
     # Multi-strategy rewards
     "MultiStrategyReward",
     "MultiStrategyRewardResult",

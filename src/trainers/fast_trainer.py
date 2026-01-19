@@ -27,7 +27,12 @@ from .micro_rounds import MicroRoundManager
 from .buddy_buffer import BuddyBuffer
 from ..losses import get_loss_fn
 from ..rewards import CombinedRewardFunction
-from ..data.preprocessing import format_prompt
+from ..data.preprocessing import (
+    format_prompt,
+    format_multi_strategy_prompt,
+    format_mistral3_prompt,
+    is_mistral3_model,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +56,12 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         use_compile: bool = True,
     ):
         super().__init__(config, model_configs, output_dir)
+
+        # Store model configs dict for lookup by model_id
+        self.model_configs_dict = {}
+        for i, mc in enumerate(model_configs):
+            model_id = f"M{i+1}"
+            self.model_configs_dict[model_id] = mc
 
         # Optimization flags
         self.use_compile = use_compile
@@ -97,6 +108,48 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
 
         return model, tokenizer
 
+    def _format_prompt_for_model(
+        self,
+        model_id: str,
+        question: str,
+        context: str = None,
+    ) -> str:
+        """
+        Format prompt based on template_type and model.
+
+        Args:
+            model_id: Model identifier
+            question: The question to solve
+            context: Optional teacher context for contexted generation
+
+        Returns:
+            Formatted prompt string
+        """
+        tokenizer = self.tokenizers[model_id]
+        model_name = self.model_configs_dict.get(model_id, {}).get("name", "")
+        template_type = self.config.get("prompting", {}).get("template_type", "standard")
+        multi_strategy = self.config.get("prompting", {}).get("multi_strategy", False)
+        dataset = self.config.get("training", {}).get("dataset", "gsm8k")
+
+        if context:
+            # Contexted generation with teacher hint
+            return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
+        # Check if we should use Mistral chat template
+        if template_type == "mistral-chat" and is_mistral3_model(model_name):
+            return format_mistral3_prompt(
+                question=question,
+                tokenizer=tokenizer,
+                dataset=dataset,
+                multi_strategy=multi_strategy,
+            )
+
+        # Standard prompt formatting
+        if multi_strategy:
+            return format_multi_strategy_prompt(question, dataset=dataset)
+        else:
+            return format_prompt(question)
+
     @torch.no_grad()
     def generate_traces_batched(
         self,
@@ -114,13 +167,10 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         tokenizer = self.tokenizers[model_id]
         model.eval()
 
-        # Prepare all prompts
+        # Prepare all prompts using appropriate formatter
         prompts = []
         for question in questions:
-            if context:
-                prompt = f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
-            else:
-                prompt = format_prompt(question)
+            prompt = self._format_prompt_for_model(model_id, question, context)
             prompts.append(prompt)
 
         # Expand for multiple traces

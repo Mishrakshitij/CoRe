@@ -106,6 +106,18 @@ def main():
         default=None,
         help="Path to checkpoint directory to resume training from",
     )
+    parser.add_argument(
+        "--prompt-template",
+        type=str,
+        default="standard",
+        choices=["standard", "mistral-chat"],
+        help="Prompt template type: standard (raw prompts) or mistral-chat (chat template for Mistral-3)",
+    )
+    parser.add_argument(
+        "--think-reward",
+        action="store_true",
+        help="Enable [THINK] content diversity reward for Mistral reasoning models",
+    )
 
     args = parser.parse_args()
 
@@ -126,6 +138,16 @@ def main():
         config["fast_training"] = {}
     config["fast_training"]["gen_batch_size"] = args.gen_batch_size
     config["fast_training"]["use_compile"] = not args.no_compile
+
+    # Add prompt template config
+    if "prompting" not in config:
+        config["prompting"] = {}
+    config["prompting"]["template_type"] = args.prompt_template
+
+    # Add think reward config
+    if "rewards" not in config:
+        config["rewards"] = {}
+    config["rewards"]["use_think_reward"] = args.think_reward
 
     # Create experiment name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -152,16 +174,21 @@ def main():
     logger.info(f"Num samples: {num_samples}")
     logger.info(f"Generation batch size: {args.gen_batch_size}")
     logger.info(f"torch.compile enabled: {not args.no_compile}")
+    logger.info(f"Prompt template: {args.prompt_template}")
+    logger.info(f"Think reward enabled: {args.think_reward}")
 
     # Setup wandb
     if args.use_wandb:
         config["use_wandb"] = True
         setup_wandb(config, experiment_name)
 
-    # Get model configs
+    # Get model configs - use first two models from available
+    available_models = list(config["models"]["available"].keys())
+    if len(available_models) < 2:
+        raise ValueError(f"Need at least 2 models in config, found: {available_models}")
     model_configs = [
-        config["models"]["available"]["qwen2_5_3b"],
-        config["models"]["available"]["qwen3_4b"],
+        config["models"]["available"][available_models[0]],
+        config["models"]["available"][available_models[1]],
     ]
 
     logger.info(f"Models:")
