@@ -15,6 +15,7 @@ Usage:
 """
 
 import os
+import random
 
 # Ensure HuggingFace cache is set correctly before any imports
 if "HF_HOME" not in os.environ:
@@ -475,51 +476,72 @@ class DistributedCollaborativeTrainer(BaseCollabTrainer):
                         best_correct_models[q_idx] = model_id
 
         # ========== Micro-round B: Contexted Generation ==========
+        # CRITICAL FIX: All ranks must call generate() the same number of times.
+        # Different ranks may have different local data, but synced_gpus=True requires
+        # identical call patterns. We iterate over ALL questions (not just those with
+        # contexts) to ensure synchronized iteration counts across ranks.
         round_b_results = {model_id: [None] * batch_size for model_id in self.models}
 
-        contexted_questions = []
-        contexted_indices = []
+        # Pre-compute contexts for all questions (None if no best trace available)
         teacher_contexts = []
-
         for q_idx, (question, best_trace) in enumerate(zip(questions, best_correct_traces)):
             if best_trace is not None:
                 context = self.micro_round.compress_trace(
                     best_trace,
                     include_answer=self.config["collaboration"]["include_answer_in_context"],
                 )
-                contexted_questions.append(question)
-                contexted_indices.append(q_idx)
                 teacher_contexts.append(context)
+            else:
+                teacher_contexts.append(None)
 
-        if contexted_questions:
-            for model_id in self.models:
-                for i, (q_idx, question, context) in enumerate(
-                    zip(contexted_indices, contexted_questions, teacher_contexts)
-                ):
-                    traces_b = []
-                    used_hint = []
+        # Pre-compute ALL hint decisions with synced random seed across ranks
+        # This ensures all ranks make identical decisions and follow same code path
+        sync_seed = step + self.state.epoch * 10000  # Deterministic seed based on step
+        hint_rng = random.Random(sync_seed)
+        p_hint = self.config["collaboration"]["p_hint"]
 
-                    for _ in range(self.K_prime):
-                        use_hint = self.micro_round.should_use_hint()
-                        used_hint.append(use_hint)
+        # Pre-compute hint decisions for all (model, question, k_prime) combinations
+        # Structure: hint_decisions[model_id][q_idx][k] = bool
+        hint_decisions = {}
+        for model_id in self.models:
+            hint_decisions[model_id] = []
+            for _ in range(batch_size):  # Iterate over ALL questions, not just contexted
+                k_hints = [hint_rng.random() < p_hint for _ in range(self.K_prime)]
+                hint_decisions[model_id].append(k_hints)
 
-                        if use_hint:
-                            trace_list = self.generate_traces_distributed(
-                                model_id=model_id,
-                                questions=[question],
-                                num_traces=1,
-                                context=context,
-                            )[0]
-                        else:
-                            trace_list = self.generate_traces_distributed(
-                                model_id=model_id,
-                                questions=[question],
-                                num_traces=1,
-                                context=None,
-                            )[0]
-                        traces_b.append(trace_list[0] if trace_list else "")
+        # Synchronize all processes before generation to ensure same state
+        self.accelerator.wait_for_everyone()
 
-                    gt = ground_truths[q_idx]
+        # Iterate over ALL questions to ensure same generate() call count across ranks
+        for model_id in self.models:
+            for q_idx, (question, context, gt) in enumerate(
+                zip(questions, teacher_contexts, ground_truths)
+            ):
+                traces_b = []
+                used_hint = hint_decisions[model_id][q_idx]
+
+                for k in range(self.K_prime):
+                    use_hint = used_hint[k]
+
+                    if use_hint and context is not None:
+                        trace_list = self.generate_traces_distributed(
+                            model_id=model_id,
+                            questions=[question],
+                            num_traces=1,
+                            context=context,
+                        )[0]
+                    else:
+                        # Generate without context (for both no-hint case and no-context case)
+                        trace_list = self.generate_traces_distributed(
+                            model_id=model_id,
+                            questions=[question],
+                            num_traces=1,
+                            context=None,
+                        )[0]
+                    traces_b.append(trace_list[0] if trace_list else "")
+
+                # Only process Round B results if we had a context (rescue attempt)
+                if context is not None:
                     round_a_had_correct = round_a_results[model_id][q_idx].best_correct_trace is not None
 
                     round_b = self.micro_round.process_round_b(

@@ -100,6 +100,18 @@ def main():
         default=4,
         help="Batch size for generation (larger = faster but more memory)",
     )
+    parser.add_argument(
+        "--model1",
+        type=str,
+        default=None,
+        help="Model 1 key from config (e.g., phi4_reasoning, qwen2_5_3b)",
+    )
+    parser.add_argument(
+        "--model2",
+        type=str,
+        default=None,
+        help="Model 2 key from config (e.g., qwen3_4b)",
+    )
 
     args = parser.parse_args()
 
@@ -148,11 +160,22 @@ def main():
         config["use_wandb"] = True
         setup_wandb(config, experiment_name)
 
-    # Get model configs
+    # Get model configs - use CLI args or fall back to defaults
+    model1_key = args.model1 if args.model1 else "qwen2_5_3b"
+    model2_key = args.model2 if args.model2 else "qwen3_4b"
+
+    # Validate model keys exist in config
+    available_models = config["models"]["available"]
+    if model1_key not in available_models:
+        raise ValueError(f"Model '{model1_key}' not found in config. Available: {list(available_models.keys())}")
+    if model2_key not in available_models:
+        raise ValueError(f"Model '{model2_key}' not found in config. Available: {list(available_models.keys())}")
+
     model_configs = [
-        config["models"]["available"]["qwen2_5_3b"],
-        config["models"]["available"]["qwen3_4b"],
+        available_models[model1_key],
+        available_models[model2_key],
     ]
+    logger.info(f"Using models: M1={model1_key}, M2={model2_key}")
 
     logger.info(f"Models:")
     for i, mc in enumerate(model_configs):

@@ -95,11 +95,12 @@ class GRPOLoss(BasePolicyLoss):
             clip_fraction = ((ratio - clipped_ratio).abs() > 1e-6).float()
             clip_fraction = (clip_fraction * mask).sum() / mask.sum().clamp(min=1)
 
+            mask_sum = mask.sum().clamp(min=1).item()
             metrics = {
                 "policy_loss": policy_loss.item(),
                 "kl_loss": kl_loss.item(),
                 "total_loss": total_loss.item(),
-                "mean_ratio": (ratio * mask).sum().item() / mask.sum().item(),
+                "mean_ratio": (ratio * mask).sum().item() / mask_sum,
                 "clip_fraction": clip_fraction.item(),
                 "mean_advantage": advantages.mean().item(),
             }
