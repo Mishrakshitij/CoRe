@@ -1,0 +1,149 @@
+# GRPO Training: Ministral-3B + Ministral-14B on GPQA with QLoRA (2 GPUs)
+# ========================================================================
+# Collaborative training with 3B + 14B models on 2 GPUs
+# M1 (Ministral-3B) on GPU 0, M2 (Ministral-14B) on GPU 1
+#
+# Memory Optimization:
+#   - QLoRA with 4-bit NF4 quantization
+#   - batch_size=1 for safety
+#   - Gradient checkpointing enabled
+
+project:
+  name: "ministral-3b-14b-gpqa-qlora-2gpu"
+  seed: 42
+  output_dir: "./outputs/ministral-3b-14b-gpqa-2gpu"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations
+models:
+  available:
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+      generation:
+        temperature: 0.7
+        top_p: 0.9
+    ministral_14b_reasoning:
+      name: "mistralai/Ministral-3-14B-Reasoning-2512"
+      type: "mistral3"
+      size: "14B"
+      generation:
+        temperature: 0.7
+        top_p: 0.9
+
+training:
+  dataset: "gpqa_main"
+  num_samples: -1
+  train_split: 1.0
+  val_split: 0.0
+  test_split: 0.0
+
+  num_epochs: 5
+  batch_size: 1
+  gradient_accumulation_steps: 8
+
+  # 2 GPU setup - one model per GPU
+  model_gpu_mapping:
+    M1: [0]    # Ministral-3B on GPU 0
+    M2: [1]    # Ministral-14B on GPU 1
+
+  # QLoRA settings
+  use_qlora: true
+  qlora_bits: 4
+  max_memory_per_gpu: "38GB"
+
+  # LoRA settings
+  use_lora: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  bf16: true
+  fp16: false
+  max_grad_norm: 1.0
+
+  save_steps: 25
+  eval_steps: 25
+  logging_steps: 5
+
+policy_optimization:
+  algorithm: "grpo"
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+  K: 2
+  K_prime: 1
+  beta: 0.04
+  epsilon: 0.2
+  steps_per_generation: 4
+  num_iterations: 1
+
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+  alpha: 0.3
+  partial_thresh: 0.5
+  delta: 0.15
+  eta: 0.1
+  r_teach: 0.15
+  use_think_reward: true
+  w_think: 0.1
+
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  enable_distillation: false
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+generation:
+  max_new_tokens: 2048    # Reduced for memory
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+prompting:
+  multi_strategy: true
+  template_type: "mistral-chat"
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+counterfactual:
+  enabled: false
+
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 4
+  generate_traces_for_eval: true
+
+fast_training:
+  gen_batch_size: 1
