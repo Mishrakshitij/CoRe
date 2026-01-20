@@ -56,6 +56,13 @@ class GRPOLoss(BasePolicyLoss):
         """
         batch_size, seq_len = log_probs.shape
 
+        # Ensure all tensors are on the same device (for multi-GPU setups)
+        device = log_probs.device
+        old_log_probs = old_log_probs.to(device)
+        ref_log_probs = ref_log_probs.to(device)
+        advantages = advantages.to(device)
+        mask = mask.to(device)
+
         # Compute token-level importance ratio
         ratio = self.compute_importance_ratio(log_probs, old_log_probs, mask)
 
