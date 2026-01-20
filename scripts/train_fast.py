@@ -110,8 +110,8 @@ def main():
         "--prompt-template",
         type=str,
         default="standard",
-        choices=["standard", "mistral-chat"],
-        help="Prompt template type: standard (raw prompts) or mistral-chat (chat template for Mistral-3)",
+        choices=["standard", "mistral-chat", "phi-chat", "auto"],
+        help="Prompt template type: standard (raw prompts), mistral-chat (Mistral-3), phi-chat (Phi-4), or auto (detect from model name)",
     )
     parser.add_argument(
         "--think-reward",

@@ -45,12 +45,20 @@ class ThinkReward:
         self.embedding_model_name = config.get(
             "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"
         )
+        # Device for embedding model (default: cuda:0 or first available GPU)
+        # Set via config: rewards.embedding_device: "cuda:3"
+        self.embedding_device = config.get("embedding_device", None)
 
     @property
     def embedding_model(self):
-        """Lazy load embedding model."""
+        """Lazy load embedding model with optional device specification."""
         if self._embedding_model is None:
-            self._embedding_model = SentenceTransformer(self.embedding_model_name)
+            if self.embedding_device:
+                self._embedding_model = SentenceTransformer(
+                    self.embedding_model_name, device=self.embedding_device
+                )
+            else:
+                self._embedding_model = SentenceTransformer(self.embedding_model_name)
         return self._embedding_model
 
     def compute_embedding_distance(self, text1: str, text2: str) -> float:

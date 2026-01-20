@@ -227,6 +227,53 @@ class BaseCollabTrainer:
         # Logging
         self.use_wandb = config.get("use_wandb", False)
 
+    def get_generation_config(self, model_id: str = None, model_idx: int = None) -> dict:
+        """
+        Get generation config for a specific model, merging global defaults with per-model overrides.
+
+        Per-model generation config can be specified in the model's config under 'generation' key:
+        ```yaml
+        models:
+          available:
+            phi4_reasoning:
+              name: "microsoft/Phi-4-reasoning-plus"
+              generation:
+                temperature: 0.8
+                top_k: 50
+        ```
+
+        Args:
+            model_id: Model identifier (e.g., 'M1', 'M2')
+            model_idx: Model index (0, 1, ...) - converted to model_id if model_id not provided
+
+        Returns:
+            Merged generation config dict
+        """
+        # Start with global generation config
+        gen_config = dict(self.gen_config)
+
+        # Determine which model config to look up
+        if model_id is None and model_idx is not None:
+            model_id = f"M{model_idx + 1}"
+
+        if model_id is None:
+            return gen_config
+
+        # Find the model config by model_id
+        model_idx_from_id = int(model_id[1:]) - 1 if model_id.startswith("M") else None
+
+        if model_idx_from_id is not None and model_idx_from_id < len(self.model_configs):
+            model_config = self.model_configs[model_idx_from_id]
+
+            # Merge per-model generation overrides if present
+            if "generation" in model_config:
+                per_model_gen = model_config["generation"]
+                for key, value in per_model_gen.items():
+                    gen_config[key] = value
+                logger.debug(f"Model {model_id} using custom generation config: {per_model_gen}")
+
+        return gen_config
+
     def get_effective_reward_fn(self):
         """
         Get the effective reward function based on config.
@@ -245,7 +292,7 @@ class BaseCollabTrainer:
         use_lora: bool = True,
     ) -> Tuple[nn.Module, Any]:
         """
-        Load a model with optional LoRA and custom GPU assignment.
+        Load a model with optional LoRA/QLoRA and custom GPU assignment.
 
         Args:
             model_name: HuggingFace model name
@@ -261,6 +308,11 @@ class BaseCollabTrainer:
         gpu_mapping = self.config.get("training", {}).get("model_gpu_mapping", {})
         gpu_ids = gpu_mapping.get(model_id, None)
 
+        # Check for QLoRA settings
+        use_qlora = self.config.get("training", {}).get("use_qlora", False)
+        qlora_bits = self.config.get("training", {}).get("qlora_bits", 4)
+        max_memory_per_gpu = self.config.get("training", {}).get("max_memory_per_gpu", None)
+
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
@@ -273,24 +325,62 @@ class BaseCollabTrainer:
         # Check if this is a Mistral-3 model requiring special handling
         use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
 
-        # Determine device_map based on config
-        # For Mistral3 (vision-language model), always use "auto" as custom mapping is complex
+        # Build quantization config for QLoRA if enabled
+        quantization_config = None
+        if use_qlora:
+            from transformers import BitsAndBytesConfig
+            logger.info(f"Enabling QLoRA with {qlora_bits}-bit quantization for {model_id}")
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=(qlora_bits == 4),
+                load_in_8bit=(qlora_bits == 8),
+                bnb_4bit_compute_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+
+        # Determine device_map and max_memory based on config
+        # For QLoRA + GPU mapping, use device_map="auto" with max_memory constraint
+        # This lets HuggingFace handle quantized model sharding properly
+        max_memory = None
+
         if use_mistral3:
             logger.info(f"Mistral3 model detected, using device_map='auto' for {model_id}")
             device_map = "auto"
+            if gpu_ids and max_memory_per_gpu:
+                max_memory = {gpu: max_memory_per_gpu for gpu in gpu_ids}
+                logger.info(f"  Constraining to GPUs {gpu_ids} with max_memory={max_memory_per_gpu}")
+        elif use_qlora and gpu_ids:
+            # For QLoRA with specific GPUs, use auto + max_memory
+            # This is more reliable than manual layer mapping for quantized models
+            device_map = "auto"
+            if max_memory_per_gpu:
+                max_memory = {gpu: max_memory_per_gpu for gpu in gpu_ids}
+            else:
+                # Default: allow full GPU memory on assigned GPUs
+                max_memory = {gpu: "40GB" for gpu in gpu_ids}
+            logger.info(f"QLoRA + GPU mapping: using device_map='auto' with max_memory={max_memory}")
         elif gpu_ids:
             logger.info(f"Using custom GPU mapping for {model_id}: GPUs {gpu_ids}")
             device_map = build_device_map_for_gpus(model_name, gpu_ids)
         else:
             device_map = "auto"
 
+        # Load model with appropriate settings
+        load_kwargs = {
+            "torch_dtype": torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+            "trust_remote_code": True,
+            "device_map": device_map,
+        }
+        if quantization_config is not None:
+            load_kwargs["quantization_config"] = quantization_config
+        if max_memory is not None:
+            load_kwargs["max_memory"] = max_memory
+
         if use_mistral3:
             logger.info(f"Using Mistral3ForConditionalGeneration for {model_name}")
             model = Mistral3ForConditionalGeneration.from_pretrained(
                 model_name,
-                torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-                trust_remote_code=True,
-                device_map=device_map,
+                **load_kwargs,
             )
         else:
             if is_mistral3_model(model_name) and not MISTRAL3_AVAILABLE:
@@ -300,9 +390,7 @@ class BaseCollabTrainer:
                 )
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-                trust_remote_code=True,
-                device_map=device_map,
+                **load_kwargs,
             )
 
         # Apply LoRA if enabled

@@ -31,7 +31,9 @@ from ..data.preprocessing import (
     format_prompt,
     format_multi_strategy_prompt,
     format_mistral3_prompt,
+    format_phi4_prompt,
     is_mistral3_model,
+    is_phi4_model,
 )
 
 
@@ -117,6 +119,12 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         """
         Format prompt based on template_type and model.
 
+        Supports:
+        - standard: Raw prompts (default)
+        - mistral-chat: Chat template for Mistral-3 reasoning models
+        - phi-chat: Chat template for Phi-4 reasoning models
+        - auto: Auto-detect based on model name
+
         Args:
             model_id: Model identifier
             question: The question to solve
@@ -134,6 +142,24 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         if context:
             # Contexted generation with teacher hint
             return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
+        # Auto-detect template type based on model name
+        if template_type == "auto":
+            if is_phi4_model(model_name):
+                template_type = "phi-chat"
+            elif is_mistral3_model(model_name):
+                template_type = "mistral-chat"
+            else:
+                template_type = "standard"
+
+        # Check if we should use Phi-4 chat template
+        if template_type == "phi-chat" and is_phi4_model(model_name):
+            return format_phi4_prompt(
+                question=question,
+                tokenizer=tokenizer,
+                dataset=dataset,
+                multi_strategy=multi_strategy,
+            )
 
         # Check if we should use Mistral chat template
         if template_type == "mistral-chat" and is_mistral3_model(model_name):
@@ -162,10 +188,14 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         Generate traces for multiple questions in batched mode.
 
         This is the key optimization - generates all questions at once.
+        Uses per-model generation config for model-specific temperature, top_k, etc.
         """
         model = self.models[model_id]
         tokenizer = self.tokenizers[model_id]
         model.eval()
+
+        # Get per-model generation config (merges global defaults with model overrides)
+        gen_config = self.get_generation_config(model_id=model_id)
 
         # Prepare all prompts using appropriate formatter
         prompts = []
@@ -187,14 +217,14 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
             max_length=1024,
         ).to(model.device)
 
-        # Generate all traces at once
+        # Generate all traces at once using per-model config
         outputs = model.generate(
             **inputs,
-            max_new_tokens=self.gen_config["max_new_tokens"],
-            temperature=self.gen_config["temperature"],
-            top_p=self.gen_config["top_p"],
-            top_k=self.gen_config["top_k"],
-            do_sample=self.gen_config["do_sample"],
+            max_new_tokens=gen_config["max_new_tokens"],
+            temperature=gen_config["temperature"],
+            top_p=gen_config["top_p"],
+            top_k=gen_config["top_k"],
+            do_sample=gen_config["do_sample"],
             pad_token_id=tokenizer.pad_token_id,
             num_return_sequences=1,
         )
