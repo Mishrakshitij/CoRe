@@ -523,6 +523,18 @@ GPQA_MISTRAL_XML_FORMAT = """Format your response as:
 
 <final_answer>Your final letter answer (A, B, C, or D)</final_answer>"""
 
+# AIME multi-strategy prompt with XML format for Mistral chat template
+AIME_MISTRAL_XML_FORMAT = """Format your response as:
+<strategy id="1">
+<approach>Your approach name (e.g., Algebraic, Combinatorial, Geometric)</approach>
+<reasoning>Your detailed step-by-step reasoning</reasoning>
+<result>Integer answer (000-999)</result>
+</strategy>
+
+<final_answer>Your final integer answer (000-999)</final_answer>
+
+IMPORTANT: AIME answers are always integers from 000 to 999."""
+
 
 def format_mistral3_prompt(
     question: str,
@@ -538,27 +550,74 @@ def format_mistral3_prompt(
     - User message with the question and XML format request
     - Model generates [THINK]...[/THINK] followed by XML-formatted response
 
+    Answer format is auto-detected from dataset:
+    - GPQA/MedMCQA: MCQ (A/B/C/D)
+    - AIME: Integer (000-999)
+    - GSM8K/MATH: Numerical
+
     Args:
         question: The question to solve
         tokenizer: Mistral tokenizer with chat template
-        dataset: Dataset type for appropriate system message
+        dataset: Dataset type (determines system message and answer format)
         multi_strategy: If True, request multi-strategy XML format
 
     Returns:
         Formatted prompt using chat template
     """
+    # Auto-detect answer format from dataset
+    dataset_lower = dataset.lower()
+
+    # Determine if this is a numeric/integer answer dataset
+    is_numeric_dataset = dataset_lower in [
+        "aime", "gsm8k", "math", "math_qwedsacf",
+        "aime-1983-2024", "aime-1983-2025"
+    ]
+    is_mcq_dataset = dataset_lower in [
+        "gpqa", "gpqa_main", "gpqa_diamond", "gpqa_extended",
+        "medmcqa"
+    ]
+
     # System message for Mistral reasoning - triggers [THINK] format
-    if dataset.lower() in ["gpqa", "gpqa_main", "gpqa_diamond"]:
+    if dataset_lower in ["aime", "aime-1983-2024", "aime-1983-2025"]:
+        # AIME/Olympiad-specific system message
+        system_message = """You are an expert Olympiad mathematician solving AIME competition problems.
+
+Think deeply using competition-level mathematical reasoning. Consider:
+- Algebraic manipulation and clever substitutions
+- Combinatorial counting with inclusion-exclusion
+- Geometric insights and coordinate geometry
+- Number theory and modular arithmetic
+- Multiple approaches to verify your answer
+
+AIME answers are always integers from 000 to 999."""
+    elif dataset_lower in ["gsm8k"]:
+        system_message = """You are an expert mathematician solving grade-school math problems.
+
+Think through the problem step by step. Consider:
+- Multiple solution approaches
+- Careful arithmetic
+- Verification of your answer"""
+    elif dataset_lower in ["math", "math_qwedsacf"]:
+        system_message = """You are an expert mathematician solving competition-level math problems.
+
+Think through the problem step by step. Consider:
+- Algebraic and analytical approaches
+- Geometric insights
+- Multiple solution strategies to verify your answer"""
+    elif dataset_lower in ["gpqa", "gpqa_main", "gpqa_diamond", "gpqa_extended"]:
         system_message = """You are an expert scientist solving graduate-level science questions.
 
 Think through the problem step by step using your reasoning capabilities. Consider:
 - Relevant scientific principles and equations
 - Multiple approaches to verify your answer
 - Process of elimination for multiple choice"""
-    elif dataset.lower() in ["aime", "math", "math_qwedsacf"]:
-        system_message = """You are an expert mathematician solving competition-level problems.
+    elif dataset_lower in ["medmcqa"]:
+        system_message = """You are an expert medical professional solving clinical questions.
 
-Think through the problem step by step. Consider multiple approaches and verify your reasoning."""
+Think through the problem step by step. Consider:
+- Relevant medical knowledge and clinical reasoning
+- Process of elimination for multiple choice
+- Multiple approaches to verify your answer"""
     else:
         system_message = """You are an expert problem solver.
 
@@ -566,9 +625,14 @@ Think through the problem step by step. Show your reasoning clearly."""
 
     # Build user message with question and optional XML format
     if multi_strategy:
+        # Auto-select XML format based on dataset type
+        if is_numeric_dataset:
+            xml_format = AIME_MISTRAL_XML_FORMAT
+        else:
+            xml_format = GPQA_MISTRAL_XML_FORMAT
         user_message = f"""{question}
 
-{GPQA_MISTRAL_XML_FORMAT}"""
+{xml_format}"""
     else:
         user_message = question
 

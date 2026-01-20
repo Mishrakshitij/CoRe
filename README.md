@@ -79,6 +79,19 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
 - `--prompt-template mistral-chat`: Uses `apply_chat_template()` for Mistral-3 models to trigger `[THINK]...[/THINK]` reasoning format
 - `--think-reward`: Adds diversity reward for `[THINK]` reasoning blocks (optional, only with mistral-chat)
 
+**Auto-Detection of Prompt Format:**
+When using `--prompt-template mistral-chat`, the system automatically detects the appropriate prompt format based on the dataset:
+
+| Dataset | System Message | Answer Format |
+|---------|----------------|---------------|
+| **AIME** | Olympiad mathematician (algebraic, combinatorial, geometric, number theory) | Integer (000-999) |
+| **GSM8K** | Grade-school math solver | Numerical |
+| **MATH** | Competition math solver | Numerical |
+| **GPQA** | Expert scientist (scientific principles, process of elimination) | MCQ (A/B/C/D) |
+| **MedMCQA** | Medical professional (clinical reasoning) | MCQ (A/B/C/D) |
+
+No need to specify answer format - it's determined by the dataset config!
+
 ### Supported Datasets
 
 | Dataset | Domain | Answer Format | Notes |
