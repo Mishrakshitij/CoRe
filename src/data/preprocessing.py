@@ -474,42 +474,72 @@ def is_mistral3_model(model_name: str) -> bool:
     return any(pattern in model_name for pattern in mistral3_patterns)
 
 
+def is_phi4_model(model_name: str) -> bool:
+    """Check if model is a Phi-4 reasoning model."""
+    phi4_patterns = [
+        "Phi-4-reasoning",
+        "phi-4-reasoning",
+        "Phi-4-mini-reasoning",
+        "phi-4-mini-reasoning",
+    ]
+    return any(pattern in model_name for pattern in phi4_patterns)
+
+
 def extract_think_content(text: str) -> Optional[str]:
     """
-    Extract content from [THINK]...[/THINK] blocks in Mistral reasoning output.
+    Extract content from thinking blocks in model reasoning output.
+
+    Supports both formats:
+    - Mistral-3: [THINK]...[/THINK] (square brackets, uppercase)
+    - Phi-4: <think>...</think> (XML-style tags, lowercase)
 
     Args:
         text: Model response text
 
     Returns:
-        Content between [THINK] and [/THINK] tags, or None if not found
+        Content between thinking tags, or None if not found
     """
-    # Pattern to match [THINK]...[/THINK] with optional whitespace
-    pattern = r'\[THINK\](.*?)\[/THINK\]'
-    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-
+    # Try Mistral format first: [THINK]...[/THINK]
+    mistral_pattern = r'\[THINK\](.*?)\[/THINK\]'
+    match = re.search(mistral_pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
+
+    # Try Phi-4 format: <think>...</think>
+    phi4_pattern = r'<think>(.*?)</think>'
+    match = re.search(phi4_pattern, text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
     return None
 
 
 def get_text_after_think(text: str) -> str:
     """
-    Get text content after [/THINK] tag for answer extraction.
+    Get text content after thinking block for answer extraction.
 
-    For Mistral reasoning models, the actual answer comes after the thinking block.
+    Supports both formats:
+    - Mistral-3: [/THINK] (square brackets)
+    - Phi-4: </think> (XML-style tag)
 
     Args:
         text: Model response text
 
     Returns:
-        Text after [/THINK] or original text if no think block found
+        Text after thinking block, or original text if no think block found
     """
-    pattern = r'\[/THINK\](.*)$'
-    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-
+    # Try Mistral format first: [/THINK]
+    mistral_pattern = r'\[/THINK\](.*)$'
+    match = re.search(mistral_pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
+
+    # Try Phi-4 format: </think>
+    phi4_pattern = r'</think>(.*)$'
+    match = re.search(phi4_pattern, text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
     return text
 
 
@@ -653,3 +683,158 @@ Think through the problem step by step. Show your reasoning clearly."""
     except Exception as e:
         # Fallback to simple format if chat template fails
         return f"{system_message}\n\n{user_message}\n\nLet me think through this step by step:"
+
+
+# Phi-4 XML format templates (same structure as Mistral but works with <think> tags)
+PHI4_GPQA_XML_FORMAT = """Format your response as:
+<strategy id="1">
+<approach>Your approach name</approach>
+<reasoning>Your detailed reasoning</reasoning>
+<result>Letter answer (A, B, C, or D)</result>
+</strategy>
+
+<final_answer>Your final letter answer (A, B, C, or D)</final_answer>"""
+
+PHI4_AIME_XML_FORMAT = """Format your response as:
+<strategy id="1">
+<approach>Your approach name (e.g., Algebraic, Combinatorial, Geometric)</approach>
+<reasoning>Your detailed step-by-step reasoning</reasoning>
+<result>Integer answer (000-999)</result>
+</strategy>
+
+<final_answer>Your final integer answer (000-999)</final_answer>
+
+IMPORTANT: AIME answers are always integers from 000 to 999."""
+
+
+def format_phi4_prompt(
+    question: str,
+    tokenizer,
+    dataset: str = "gpqa",
+    multi_strategy: bool = True,
+) -> str:
+    """
+    Format prompt for Phi-4 reasoning models using ChatML template.
+
+    Phi-4 reasoning models expect:
+    - System message with instructions for <think>...</think> structure
+    - User message with question and XML format request
+    - Model generates <think>...</think> followed by Solution section
+
+    Uses ChatML format: <|im_start|>system<|im_sep|>...<|im_end|>
+
+    Answer format is auto-detected from dataset:
+    - GPQA/MedMCQA: MCQ (A/B/C/D)
+    - AIME: Integer (000-999)
+    - GSM8K/MATH: Numerical
+
+    Args:
+        question: The question to solve
+        tokenizer: Phi-4 tokenizer with chat template
+        dataset: Dataset type (determines system message and answer format)
+        multi_strategy: If True, request multi-strategy XML format
+
+    Returns:
+        Formatted prompt using chat template
+    """
+    dataset_lower = dataset.lower()
+
+    # Determine if this is a numeric/integer answer dataset
+    is_numeric_dataset = dataset_lower in [
+        "aime", "gsm8k", "math", "math_qwedsacf",
+        "aime-1983-2024", "aime-1983-2025"
+    ]
+
+    # Phi-4 system message (based on HuggingFace documentation)
+    # This triggers the <think>...</think> structure
+    if dataset_lower in ["aime", "aime-1983-2024", "aime-1983-2025"]:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your reasoning process in steps using competition-level mathematical reasoning. Consider algebraic manipulation, combinatorial counting, geometric insights, and number theory.
+
+In the Solution section, provide the final answer as an integer from 000 to 999.
+
+Format your final answer as: <final_answer>INTEGER</final_answer>"""
+    elif dataset_lower in ["gsm8k"]:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your reasoning process in steps for solving math problems.
+
+In the Solution section, provide the final numerical answer.
+
+Format your final answer as: <final_answer>NUMBER</final_answer>"""
+    elif dataset_lower in ["math", "math_qwedsacf"]:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your reasoning process in steps using competition-level mathematical reasoning.
+
+In the Solution section, provide the final answer.
+
+Format your final answer as: <final_answer>ANSWER</final_answer>"""
+    elif dataset_lower in ["gpqa", "gpqa_main", "gpqa_diamond", "gpqa_extended"]:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your reasoning process in steps using scientific principles and equations. Consider multiple approaches and use process of elimination.
+
+In the Solution section, provide the final letter answer (A, B, C, or D).
+
+Format your final answer as: <final_answer>LETTER</final_answer>"""
+    elif dataset_lower in ["medmcqa"]:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your medical reasoning process using clinical knowledge.
+
+In the Solution section, provide the final letter answer (A, B, C, or D).
+
+Format your final answer as: <final_answer>LETTER</final_answer>"""
+    else:
+        system_message = """You are Phi, a language model trained by Microsoft to help users. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions.
+
+Please structure your response into two main sections: Thought and Solution using the format: <think> {Thought section} </think> {Solution section}.
+
+In the Thought section, detail your reasoning process in steps.
+
+In the Solution section, provide the final answer.
+
+Format your final answer as: <final_answer>ANSWER</final_answer>"""
+
+    # Build user message with question and optional XML format
+    if multi_strategy:
+        # Auto-select XML format based on dataset type
+        if is_numeric_dataset:
+            xml_format = PHI4_AIME_XML_FORMAT
+        else:
+            xml_format = PHI4_GPQA_XML_FORMAT
+        user_message = f"""{question}
+
+{xml_format}"""
+    else:
+        user_message = question
+
+    # Build messages for chat template
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message}
+    ]
+
+    # Use tokenizer's chat template (ChatML format for Phi-4)
+    try:
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        return prompt
+    except Exception as e:
+        # Fallback to simple format if chat template fails
+        return f"{system_message}\n\n{user_message}"

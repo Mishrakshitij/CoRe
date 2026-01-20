@@ -45,7 +45,9 @@ This project implements **Collaborative Reasoning** where multiple models (M1, M
 | `ministral_3b` | ministral/Ministral-3b-instruct | mistral | 3B | Standard |
 | `ministral_3b_reasoning` | mistralai/Ministral-3-3B-Reasoning-2512 | mistral3 | 3B | **Requires transformers>=5.0.0** |
 | `ministral_8b_reasoning` | mistralai/Ministral-3-8B-Reasoning-2512 | mistral3 | 8B | **Requires transformers>=5.0.0** |
-| `phi4_reasoning` | microsoft/Phi-4-reasoning | phi | 14B | QLoRA recommended |
+| `ministral_14b_reasoning` | mistralai/Ministral-3-14B-Reasoning-2512 | mistral3 | 14B | **Requires transformers>=5.0.0, QLoRA** |
+| `phi4_reasoning` | microsoft/Phi-4-reasoning | phi4 | 14B | QLoRA recommended |
+| `phi4_reasoning_plus` | microsoft/Phi-4-reasoning-plus | phi4 | 14B | QLoRA recommended |
 
 **Mistral-3 Reasoning Models:**
 The Ministral reasoning models use `Mistral3ForConditionalGeneration` which requires transformers 5.0.0+. Set up a separate conda environment:
@@ -74,13 +76,67 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
   --no-compile
 ```
 
-**Mistral Prompt Template Options:**
+**Prompt Template Options:**
 - `--prompt-template standard`: Default raw prompts (works for Qwen, Llama, etc.)
 - `--prompt-template mistral-chat`: Uses `apply_chat_template()` for Mistral-3 models to trigger `[THINK]...[/THINK]` reasoning format
-- `--think-reward`: Adds diversity reward for `[THINK]` reasoning blocks (optional, only with mistral-chat)
+- `--prompt-template phi-chat`: Uses ChatML template for Phi-4 models to trigger `<think>...</think>` reasoning format
+- `--prompt-template auto`: Auto-detect template based on model name (recommended for mixed model training)
+- `--think-reward`: Adds diversity reward for thinking blocks (works with both `[THINK]` and `<think>` formats)
+
+**Phi-4 Reasoning Models:**
+Microsoft's Phi-4 reasoning models use `<think>...</think>` tags for reasoning:
+
+```bash
+# Train with Phi-4 reasoning model
+CUDA_VISIBLE_DEVICES=0,1 python scripts/train_fast.py \
+  --config configs/grpo_gpqa_phi4_ministral14b_qlora.yaml \
+  --prompt-template phi-chat \
+  --think-reward \
+  --no-compile
+```
+
+**QLoRA Training for Large Models (14B+):**
+For 14B+ models, QLoRA is essential to fit on 40GB GPUs:
+
+```bash
+# Train Phi-4 + Ministral-14B with QLoRA (requires 4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
+  --config configs/grpo_gpqa_phi4_ministral14b_qlora.yaml \
+  --prompt-template auto \
+  --think-reward \
+  --gen-batch-size 1 \
+  --no-compile
+```
+
+QLoRA config options in YAML:
+```yaml
+training:
+  use_qlora: true           # Enable QLoRA
+  qlora_bits: 4             # 4-bit (default) or 8-bit quantization
+  max_memory_per_gpu: "38GB"  # Memory limit per GPU
+  lora_r: 32                # Higher rank for larger models
+```
+
+**Per-Model Generation Config:**
+Each model can have its own generation settings:
+```yaml
+models:
+  available:
+    phi4_reasoning:
+      name: "microsoft/Phi-4-reasoning-plus"
+      generation:           # Model-specific overrides
+        temperature: 0.8
+        top_k: 50
+        top_p: 0.95
+    ministral_14b:
+      name: "mistralai/Ministral-3-14B-Reasoning-2512"
+      generation:
+        temperature: 0.7
+        top_p: 0.9
+```
 
 **Auto-Detection of Prompt Format:**
-When using `--prompt-template mistral-chat`, the system automatically detects the appropriate prompt format based on the dataset:
+When using `--prompt-template auto`, the system automatically detects the appropriate template based on model name and dataset:
 
 | Dataset | System Message | Answer Format |
 |---------|----------------|---------------|
