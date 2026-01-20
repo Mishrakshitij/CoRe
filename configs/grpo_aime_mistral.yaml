@@ -1,0 +1,172 @@
+# GRPO Training on AIME with Mistral-3 Reasoning Models
+# ======================================================
+# 2 epochs, 80:20 train:test split
+# Using Ministral-3B + Ministral-8B on GPUs 0-1
+
+project:
+  name: "mistral-aime-think-grpo-v1"
+  seed: 42
+  output_dir: "/home/lukas/kmishra/CoRe/outputs/mistral-aime-think-grpo-v1"
+  log_dir: "/home/lukas/kmishra/CoRe/logs"
+  cache_dir: "/home/lukas/kmishra/CoRe/cache"
+
+# Model configurations
+models:
+  available:
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+    ministral_8b_reasoning:
+      name: "mistralai/Ministral-3-8B-Reasoning-2512"
+      type: "mistral3"
+      size: "8B"
+
+training:
+  # AIME dataset with 80:20 train:test split (~770 train, ~193 test)
+  dataset: "aime"
+  num_samples: -1     # Use all available
+  train_split: 1.0    # Use full train portion
+  val_split: 0.0      # No validation split
+  test_split: 0.0     # Test handled separately
+
+  # Training epochs
+  num_epochs: 2
+
+  # Batch settings
+  batch_size: 2
+  gradient_accumulation_steps: 4  # Effective batch size = 8
+
+  # Model parallelism for 2 GPUs
+  model_gpu_mapping:
+    M1: [0]    # Ministral-3B-Reasoning on GPU 0
+    M2: [1]    # Ministral-8B-Reasoning on GPU 1
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # LoRA settings
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 50
+  eval_steps: 50
+  logging_steps: 5
+
+# GRPO algorithm configuration
+policy_optimization:
+  algorithm: "grpo"
+
+  # Importance sampling at token level for GRPO
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 2        # Cold generation traces
+  K_prime: 1  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # GRPO clipping (standard epsilon)
+  epsilon: 0.2
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1 (explore more)
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2+ (exploit more)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+  # [THINK] reward for Mistral reasoning models
+  use_think_reward: false  # Enable via --think-reward CLI flag
+  w_think: 0.1             # Weight for [THINK] diversity reward
+
+# Collaboration settings
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+# Distance/Similarity metrics
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+# Generation settings - AIME needs longer responses
+generation:
+  max_new_tokens: 1024
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting - enable multi-strategy for reasoning models
+prompting:
+  multi_strategy: true
+  template_type: "mistral-chat"  # Use apply_chat_template() for Mistral-3 models
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+# Counterfactual regularization
+counterfactual:
+  enabled: false  # Disabled for faster training
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 8
+  generate_traces_for_eval: true
+
+# Fast training settings
+fast_training:
+  gen_batch_size: 2
