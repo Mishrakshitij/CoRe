@@ -1,7 +1,7 @@
-# GRPO Training: Ministral-3B + Ministral-14B on GPQA with QLoRA (2 GPUs)
+# GRPO Training: Ministral-3B + Ministral-14B on GPQA with QLoRA (4 GPUs)
 # ========================================================================
-# Collaborative training with 3B + 14B models on 2 GPUs
-# M1 (Ministral-3B) on GPU 0, M2 (Ministral-14B) on GPU 1
+# Collaborative training with 3B + 14B models on 4 GPUs
+# M1 (Ministral-3B) on GPU 0, M2 (Ministral-14B) on GPUs 1,2,3
 #
 # Memory Optimization:
 #   - QLoRA with 4-bit NF4 quantization
@@ -9,9 +9,9 @@
 #   - Gradient checkpointing enabled
 
 project:
-  name: "ministral-3b-14b-gpqa-qlora-2gpu"
+  name: "ministral-3b-14b-gpqa-qlora-4gpu"
   seed: 42
-  output_dir: "./outputs/ministral-3b-14b-gpqa-2gpu"
+  output_dir: "/home/lukas/kmishra/CoRe/outputs/ministral-3b-14b-gpqa-4gpu"
   log_dir: "./logs"
   cache_dir: "./cache"
 
@@ -44,10 +44,10 @@ training:
   batch_size: 1
   gradient_accumulation_steps: 8
 
-  # 2 GPU setup - one model per GPU
+  # 4 GPU setup - 3B on GPU 0, 14B spread across GPUs 1,2,3
   model_gpu_mapping:
-    M1: [0]    # Ministral-3B on GPU 0
-    M2: [1]    # Ministral-14B on GPU 1
+    M1: [0]       # Ministral-3B on GPU 0
+    M2: [1, 2, 3] # Ministral-14B on GPUs 1,2,3
 
   # QLoRA settings
   use_qlora: true

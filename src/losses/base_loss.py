@@ -78,6 +78,11 @@ class BasePolicyLoss(ABC, nn.Module):
         For token-level: r_t = exp(log_pi - log_pi_old)
         For sequence-level: r = exp(mean(log_pi - log_pi_old))
         """
+        # Ensure all tensors are on the same device (for multi-GPU setups)
+        device = log_probs.device
+        old_log_probs = old_log_probs.to(device)
+        mask = mask.to(device)
+
         log_ratio = log_probs - old_log_probs
 
         if self.importance_sampling_level == "token":
@@ -110,6 +115,11 @@ class BasePolicyLoss(ABC, nn.Module):
         mask: torch.Tensor,
     ) -> torch.Tensor:
         """Compute KL divergence from reference policy."""
+        # Ensure all tensors are on the same device (use log_probs device as reference)
+        device = log_probs.device
+        ref_log_probs = ref_log_probs.to(device)
+        mask = mask.to(device)
+
         kl = log_probs - ref_log_probs  # Per-token KL (reverse KL)
         masked_kl = (kl * mask).sum() / mask.sum().clamp(min=1)
         return masked_kl
