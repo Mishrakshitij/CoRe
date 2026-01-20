@@ -266,6 +266,13 @@ def main():
         dataset = ReasoningDataset.from_math(split=args.split, use_qwedsacf=True, shuffle=False)
     elif args.dataset == "aime":
         dataset = ReasoningDataset.from_aime(split=args.split, shuffle=False)
+    elif args.dataset in ["gpqa", "gpqa_main", "gpqa_diamond"]:
+        # Map dataset name to difficulty parameter
+        difficulty_map = {"gpqa": "diamond", "gpqa_main": "main", "gpqa_diamond": "diamond"}
+        difficulty = difficulty_map.get(args.dataset, "diamond")
+        dataset = ReasoningDataset.from_gpqa(split=args.split, difficulty=difficulty, shuffle=False)
+    elif args.dataset == "medmcqa":
+        dataset = ReasoningDataset.from_medmcqa(split=args.split, shuffle=False)
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
