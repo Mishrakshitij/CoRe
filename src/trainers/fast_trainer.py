@@ -293,10 +293,13 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
             # Save checkpoint
             self.save_checkpoint(f"epoch_{epoch}")
 
-            # Epoch 2: Add distillation from buddy buffer
-            if epoch == 2 and len(self.buddy_buffer) > 0:
+            # Epoch 2: Add distillation from buddy buffer (optional)
+            enable_distillation = self.config.get("collaboration", {}).get("enable_distillation", True)
+            if enable_distillation and epoch == 2 and len(self.buddy_buffer) > 0:
                 logger.info("Running distillation from buddy buffer...")
                 self.distillation_epoch(train_dataloader)
+            elif not enable_distillation and epoch == 2:
+                logger.info("Distillation disabled via config (enable_distillation: false)")
 
         # Save final checkpoint
         self.save_checkpoint("final")

@@ -456,6 +456,7 @@ rewards:
 collaboration:
   p_hint: 0.5              # Hint dropout probability
   max_context_tokens: 120  # Teacher context length
+  enable_distillation: false  # Optional: disable epoch-2 distillation (GRPO already learns from hints)
 ```
 
 ## References

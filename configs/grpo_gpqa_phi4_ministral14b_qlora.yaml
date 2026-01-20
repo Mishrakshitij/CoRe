@@ -150,6 +150,7 @@ collaboration:
   max_context_tokens: 120
   include_answer_in_context: false
   max_buffer_size: 1000
+  enable_distillation: false   # Disabled - GRPO + rescue bonus already learns from hints
   distillation_batch_size: 8
   distillation_frequency: 50
   micro_round_b_exploit_boost: 0.95
