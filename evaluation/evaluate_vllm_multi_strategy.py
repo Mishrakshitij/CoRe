@@ -24,9 +24,17 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
+from transformers import AutoTokenizer
+
 from src.rewards import CombinedRewardFunction
 from src.data import ReasoningDataset
 from src.prompts import get_prompt_template
+from src.data.preprocessing import (
+    format_mistral3_prompt,
+    format_phi4_prompt,
+    is_mistral3_model,
+    is_phi4_model,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,17 +51,42 @@ class VLLMMultiStrategyEvaluator:
         gpu_memory_utilization: float = 0.85,
         base_only: bool = False,
         dataset_name: str = "math",
+        tensor_parallel_size: int = 1,
+        prompt_template: str = "auto",
     ):
         self.model_id = model_id
         self.adapter_path = adapter_path
         self.base_only = base_only
         self.dataset_name = dataset_name
+        self.tensor_parallel_size = tensor_parallel_size
+        self.base_model = base_model
 
-        # Get the appropriate prompt template
+        # Determine prompt template type
+        if prompt_template == "auto":
+            if is_phi4_model(base_model):
+                self.template_type = "phi-chat"
+            elif is_mistral3_model(base_model):
+                self.template_type = "mistral-chat"
+            else:
+                self.template_type = "standard"
+        else:
+            self.template_type = prompt_template
+
+        # Load tokenizer for chat templates
+        self.tokenizer = None
+        if self.template_type in ["mistral-chat", "phi-chat"]:
+            logger.info(f"Loading tokenizer for {self.template_type} template...")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                base_model, trust_remote_code=True
+            )
+
+        # Get fallback prompt template (for standard mode)
         self.prompt_template = get_prompt_template(dataset_name)
-        logger.info(f"Using prompt template for: {dataset_name}")
-        logger.info(f"  Domain: {self.prompt_template.domain}")
-        logger.info(f"  Strategies: {self.prompt_template.strategies}")
+        logger.info(f"Using prompt template: {self.template_type}")
+        logger.info(f"  Dataset: {dataset_name}")
+        if self.template_type == "standard":
+            logger.info(f"  Domain: {self.prompt_template.domain}")
+            logger.info(f"  Strategies: {self.prompt_template.strategies}")
 
         logger.info(f"Initializing vLLM for {model_id}...")
         logger.info(f"  Base model: {base_model}")
@@ -69,6 +102,7 @@ class VLLMMultiStrategyEvaluator:
                 gpu_memory_utilization=gpu_memory_utilization,
                 trust_remote_code=True,
                 max_model_len=4096,  # Longer for multi-strategy responses
+                tensor_parallel_size=tensor_parallel_size,
             )
             self.lora_request = None
         else:
@@ -79,11 +113,12 @@ class VLLMMultiStrategyEvaluator:
                 gpu_memory_utilization=gpu_memory_utilization,
                 trust_remote_code=True,
                 max_model_len=4096,
+                tensor_parallel_size=tensor_parallel_size,
             )
             self.lora_request = LoRARequest(
                 lora_name=model_id,
                 lora_int_id=1,
-                lora_local_path=adapter_path,
+                lora_path=adapter_path,
             )
 
         # Reward function for answer extraction
@@ -96,14 +131,34 @@ class VLLMMultiStrategyEvaluator:
             max_tokens=1024,  # Longer for detailed reasoning
         )
 
+    def _format_prompt(self, question: str) -> str:
+        """Format a single prompt based on template type."""
+        if self.template_type == "mistral-chat" and self.tokenizer:
+            return format_mistral3_prompt(
+                question=question,
+                tokenizer=self.tokenizer,
+                dataset=self.dataset_name,
+                multi_strategy=True,
+            )
+        elif self.template_type == "phi-chat" and self.tokenizer:
+            return format_phi4_prompt(
+                question=question,
+                tokenizer=self.tokenizer,
+                dataset=self.dataset_name,
+                multi_strategy=True,
+            )
+        else:
+            # Standard: use domain-specific prompt template
+            return self.prompt_template.format_prompt(question)
+
     def generate_batch(
         self,
         questions: List[str],
         num_traces: int = 2,  # Fewer traces since each is more detailed
     ) -> List[List[str]]:
         """Generate reasoning traces for a batch of questions."""
-        # Use multi-strategy prompt template
-        prompts = [self.prompt_template.format_prompt(q) for q in questions]
+        # Format prompts using appropriate template
+        prompts = [self._format_prompt(q) for q in questions]
 
         # Repeat prompts for multiple traces
         all_prompts = []
@@ -215,6 +270,11 @@ def main():
                         help="Number of traces per question (default: 2 for multi-strategy)")
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--gpu-memory", type=float, default=0.85)
+    parser.add_argument("--tensor-parallel", "-tp", type=int, default=1,
+                        help="Tensor parallel size (number of GPUs)")
+    parser.add_argument("--prompt-template", type=str, default="auto",
+                        choices=["auto", "standard", "mistral-chat", "phi-chat"],
+                        help="Prompt template type (auto detects from model)")
 
     args = parser.parse_args()
 
@@ -256,6 +316,8 @@ def main():
         gpu_memory_utilization=args.gpu_memory,
         base_only=args.base_only,
         dataset_name=args.dataset,
+        tensor_parallel_size=args.tensor_parallel,
+        prompt_template=args.prompt_template,
     )
 
     # Load dataset
@@ -287,11 +349,12 @@ def main():
 
     # Print summary
     metrics = results["metrics"]
+    metrics["template_type"] = evaluator.template_type  # Add template info
     logger.info("\n" + "="*50)
     logger.info(f"{args.model} Multi-Strategy Evaluation Results")
     logger.info("="*50)
     logger.info(f"Dataset: {args.dataset}")
-    logger.info(f"Prompt type: multi_strategy")
+    logger.info(f"Prompt template: {evaluator.template_type}")
     logger.info(f"Total samples: {metrics['total_samples']}")
     logger.info(f"Correct: {metrics['correct']}")
     logger.info(f"Accuracy: {metrics['accuracy']:.2%}")
