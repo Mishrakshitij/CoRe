@@ -19,6 +19,11 @@ from ..data.preprocessing import (
     format_multi_strategy_prompt,
     format_multi_strategy_contexted_prompt,
 )
+from ..rewards.multi_strategy_reward import (
+    extract_xml_final_answer,
+    extract_strategy_results,
+    normalize_answer,
+)
 
 
 @dataclass
@@ -92,6 +97,10 @@ class MicroRoundManager:
         self.strip_answer_from_hint = config["collaboration"].get(
             "strip_answer_from_hint",
             not self.include_answer,
+        )
+        self.use_correct_strategy_hint = config["collaboration"].get(
+            "use_correct_strategy_hint",
+            False,
         )
 
         # Round B settings
@@ -174,11 +183,46 @@ class MicroRoundManager:
         """Build teacher context for Round B based on config."""
         if self.use_full_trace_hint:
             context = trace
+            if self.use_correct_strategy_hint and self.multi_strategy:
+                extracted = self._extract_correct_strategy_hint(trace)
+                if extracted:
+                    context = extracted
             if self.strip_answer_from_hint:
                 context = self._strip_explicit_answer(context)
             return self._truncate_context(context)
 
         return self.compress_trace(trace, include_answer=self.include_answer)
+
+    def _extract_correct_strategy_hint(self, trace: str) -> Optional[str]:
+        """
+        Extract the strategy block that matches the final answer (multi-strategy).
+
+        Falls back to None if no matching strategy is found.
+        """
+        final_answer = extract_xml_final_answer(trace)
+        results = extract_strategy_results(trace)
+        if final_answer is None and results:
+            final_answer = results[-1]
+        if final_answer is None or not results:
+            return None
+
+        final_norm = normalize_answer(final_answer)
+        strategies = re.findall(
+            r'<strategy\s+id="(\d+)">\s*(.*?)</strategy>',
+            trace,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if not strategies:
+            return None
+
+        for idx, result in enumerate(results):
+            if idx >= len(strategies):
+                break
+            if normalize_answer(result) == final_norm:
+                strategy_id, body = strategies[idx]
+                return f'<strategy id="{strategy_id}">{body}</strategy>'
+
+        return None
 
     def _truncate_context(self, text: str) -> str:
         """Truncate context by rough token estimate (word count)."""
@@ -255,6 +299,8 @@ class MicroRoundManager:
         cleaned = re.sub(r'\\boxed\{[^}]*\}', '', trace)
         cleaned = re.sub(r'(?im)^\s*(?:final answer|answer)\s*:.*$', '', cleaned)
         cleaned = re.sub(r'(?im)^\s*####\s*.*$', '', cleaned)
+        cleaned = re.sub(r'(?is)<final_answer>.*?</final_answer>', '', cleaned)
+        cleaned = re.sub(r'(?is)<result>.*?</result>', '', cleaned)
         lines = [line for line in cleaned.splitlines() if line.strip()]
         return "\n".join(lines)
 
