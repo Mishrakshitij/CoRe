@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 import logging
+import json
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
@@ -82,6 +83,11 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
 
         # Generation batch size (larger = faster but more memory)
         self.gen_batch_size = config.get("fast_training", {}).get("gen_batch_size", 4)
+        self.log_round_rewards = config.get("fast_training", {}).get("log_round_rewards", False)
+        self.log_round_reward_components = config.get("fast_training", {}).get(
+            "log_round_reward_components",
+            False,
+        )
 
         # Metrics tracking
         self.epoch_metrics = {
@@ -124,6 +130,7 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         - mistral-chat: Chat template for Mistral-3 reasoning models
         - phi-chat: Chat template for Phi-4 reasoning models
         - auto: Auto-detect based on model name
+        - context_template: Optional override for contexted prompts (standard/chat/auto)
 
         Args:
             model_id: Model identifier
@@ -138,9 +145,66 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         template_type = self.config.get("prompting", {}).get("template_type", "standard")
         multi_strategy = self.config.get("prompting", {}).get("multi_strategy", False)
         dataset = self.config.get("training", {}).get("dataset", "gsm8k")
+        context_template = self.config.get("prompting", {}).get("context_template", "standard")
+        use_full_trace_hint = self.config.get("collaboration", {}).get("use_full_trace_hint", False)
+        hint_prefix = self.config.get("collaboration", {}).get("hint_prefix", None)
 
         if context:
-            # Contexted generation with teacher hint
+            # Contexted generation with teacher hint (optional chat template)
+            effective_context_template = context_template
+            if context_template == "auto":
+                if is_phi4_model(model_name):
+                    effective_context_template = "phi-chat"
+                elif is_mistral3_model(model_name):
+                    effective_context_template = "mistral-chat"
+                else:
+                    effective_context_template = "standard"
+            elif context_template == "chat":
+                if is_phi4_model(model_name):
+                    effective_context_template = "phi-chat"
+                elif is_mistral3_model(model_name):
+                    effective_context_template = "mistral-chat"
+                else:
+                    effective_context_template = "standard"
+
+            if effective_context_template in ("phi-chat", "mistral-chat"):
+                if hint_prefix is None:
+                    if use_full_trace_hint:
+                        hint_prefix = (
+                            "A peer model solved this correctly. "
+                            "Use its reasoning as guidance and follow a similar approach."
+                        )
+                    else:
+                        hint_prefix = "A peer model provided this helpful approach:"
+                contexted_question = (
+                    f"{hint_prefix}\n\n"
+                    f"<peer_hint>\n{context}\n</peer_hint>\n\n"
+                    f"{question}"
+                )
+            else:
+                if hint_prefix is None and use_full_trace_hint:
+                    hint_prefix = "Use the following reasoning trace as guidance."
+                if hint_prefix:
+                    return f"{hint_prefix}\n\n{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+                return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
+            if effective_context_template == "phi-chat" and is_phi4_model(model_name):
+                return format_phi4_prompt(
+                    question=contexted_question,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    multi_strategy=multi_strategy,
+                )
+
+            if effective_context_template == "mistral-chat" and is_mistral3_model(model_name):
+                return format_mistral3_prompt(
+                    question=contexted_question,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    multi_strategy=multi_strategy,
+                )
+
+            # Default: plain context + question (current behavior)
             return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
 
         # Auto-detect template type based on model name
@@ -214,7 +278,7 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=1024,
+            max_length=self.prompt_max_length,
         ).to(model.device)
 
         # Generate all traces at once using per-model config
@@ -436,6 +500,43 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                         best_correct_traces[q_idx] = round_a.best_correct_trace
                         best_correct_models[q_idx] = model_id
 
+        if self.log_round_rewards:
+            for model_id in self.models:
+                for q_idx, round_a in enumerate(round_a_results[model_id]):
+                    if not round_a.rewards:
+                        continue
+                    rewards = np.asarray(round_a.rewards, dtype=np.float32)
+                    correct = sum(round_a.is_correct)
+                    best_idx = round_a.best_correct_idx
+                    best_reward = None
+                    if best_idx is not None and 0 <= best_idx < len(round_a.rewards):
+                        best_reward = round_a.rewards[best_idx]
+                    best_info = ""
+                    if best_reward is not None:
+                        best_info = f", best_idx={best_idx}, best_reward={best_reward:.4f}"
+                    reward_list = [round(float(r), 4) for r in round_a.rewards]
+                    logger.info(
+                        f"[Step {step}] {model_id} Q{q_idx} Round A rewards: "
+                        f"min={rewards.min():.4f}, mean={rewards.mean():.4f}, "
+                        f"max={rewards.max():.4f}, correct={correct}/{len(round_a.is_correct)}{best_info}, "
+                        f"values={reward_list}"
+                    )
+                    if self.log_round_reward_components and round_a.reward_details:
+                        formatted = []
+                        for detail in round_a.reward_details:
+                            formatted.append({
+                                k: (
+                                    round(float(v), 4)
+                                    if isinstance(v, (float, int, np.floating, np.integer))
+                                    else v
+                                )
+                                for k, v in detail.items()
+                            })
+                        logger.info(
+                            f"[Step {step}] {model_id} Q{q_idx} Round A reward details: "
+                            f"{json.dumps(formatted, sort_keys=True)}"
+                        )
+
         # ========== Micro-round B: Batched Contexted Generation ==========
         logger.info(f"[Step {step}] Round A complete. Starting Round B generation")
         round_b_results = {model_id: [None] * batch_size for model_id in self.models}
@@ -447,10 +548,7 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
 
         for q_idx, (question, best_trace) in enumerate(zip(questions, best_correct_traces)):
             if best_trace is not None:
-                context = self.micro_round.compress_trace(
-                    best_trace,
-                    include_answer=self.config["collaboration"]["include_answer_in_context"],
-                )
+                context = self.micro_round.build_teacher_context(best_trace)
                 contexted_questions.append(question)
                 contexted_indices.append(q_idx)
                 teacher_contexts.append(context)
@@ -510,6 +608,38 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                             original_trace=round_a_results[model_id][q_idx].traces[0] if round_a_results[model_id][q_idx].traces else "",
                             rescue_trace=traces_b[0] if traces_b else "",
                             step=step,
+                        )
+
+        if self.log_round_rewards:
+            for model_id in self.models:
+                for q_idx, round_b in enumerate(round_b_results[model_id]):
+                    if round_b is None or not round_b.rewards:
+                        continue
+                    rewards = np.asarray(round_b.rewards, dtype=np.float32)
+                    correct = sum(round_b.is_correct)
+                    hints_used = sum(1 for used in round_b.used_hint if used)
+                    reward_list = [round(float(r), 4) for r in round_b.rewards]
+                    logger.info(
+                        f"[Step {step}] {model_id} Q{q_idx} Round B rewards: "
+                        f"min={rewards.min():.4f}, mean={rewards.mean():.4f}, "
+                        f"max={rewards.max():.4f}, correct={correct}/{len(round_b.is_correct)}, "
+                        f"hints_used={hints_used}/{len(round_b.used_hint)}, "
+                        f"rescue_success={round_b.rescue_success}, values={reward_list}"
+                    )
+                    if self.log_round_reward_components and round_b.reward_details:
+                        formatted = []
+                        for detail in round_b.reward_details:
+                            formatted.append({
+                                k: (
+                                    round(float(v), 4)
+                                    if isinstance(v, (float, int, np.floating, np.integer))
+                                    else v
+                                )
+                                for k, v in detail.items()
+                            })
+                        logger.info(
+                            f"[Step {step}] {model_id} Q{q_idx} Round B reward details: "
+                            f"{json.dumps(formatted, sort_keys=True)}"
                         )
 
         metrics["rescue_attempts"] = sum(1 for bc in best_correct_traces if bc is not None)

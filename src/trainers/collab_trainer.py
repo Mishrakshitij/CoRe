@@ -252,10 +252,7 @@ class CollaborativeTrainer(BaseCollabTrainer):
 
         if best_correct_trace is not None:
             # Compress to teacher context
-            teacher_context = self.micro_round.compress_trace(
-                best_correct_trace,
-                include_answer=self.config["collaboration"]["include_answer_in_context"],
-            )
+            teacher_context = self.micro_round.build_teacher_context(best_correct_trace)
 
             for model_id in self.models:
                 # Generate K' traces with hint dropout

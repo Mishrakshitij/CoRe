@@ -114,9 +114,44 @@ def main():
         help="Prompt template type: standard (raw prompts), mistral-chat (Mistral-3), phi-chat (Phi-4), or auto (detect from model name)",
     )
     parser.add_argument(
+        "--context-template",
+        type=str,
+        default=None,
+        choices=["standard", "chat", "auto"],
+        help="Contexted prompt template for rescue generation: standard (plain), chat (use model chat template), or auto (chat for Mistral/Phi)",
+    )
+    parser.add_argument(
         "--think-reward",
         action="store_true",
         help="Enable [THINK] content diversity reward for Mistral reasoning models",
+    )
+    parser.add_argument(
+        "--trace-acc-reward",
+        action="store_true",
+        help="Enable trace-accuracy reward (fraction of correct traces per question)",
+    )
+    parser.add_argument(
+        "--trace-acc-weight",
+        type=float,
+        default=None,
+        help="Weight for trace-accuracy reward",
+    )
+    parser.add_argument(
+        "--trace-acc-apply-to",
+        type=str,
+        default=None,
+        choices=["all", "correct"],
+        help="Apply trace-accuracy reward to all traces or only correct traces",
+    )
+    parser.add_argument(
+        "--log-round-rewards",
+        action="store_true",
+        help="Log Round A and Round B reward stats during training",
+    )
+    parser.add_argument(
+        "--log-reward-components",
+        action="store_true",
+        help="Log per-trace reward component details during training",
     )
 
     args = parser.parse_args()
@@ -138,16 +173,26 @@ def main():
         config["fast_training"] = {}
     config["fast_training"]["gen_batch_size"] = args.gen_batch_size
     config["fast_training"]["use_compile"] = not args.no_compile
+    config["fast_training"]["log_round_rewards"] = args.log_round_rewards
+    config["fast_training"]["log_round_reward_components"] = args.log_reward_components
 
     # Add prompt template config
     if "prompting" not in config:
         config["prompting"] = {}
     config["prompting"]["template_type"] = args.prompt_template
+    if args.context_template:
+        config["prompting"]["context_template"] = args.context_template
 
     # Add think reward config
     if "rewards" not in config:
         config["rewards"] = {}
     config["rewards"]["use_think_reward"] = args.think_reward
+    if args.trace_acc_reward:
+        config["rewards"]["use_trace_acc_reward"] = True
+    if args.trace_acc_weight is not None:
+        config["rewards"]["w_trace_acc"] = args.trace_acc_weight
+    if args.trace_acc_apply_to:
+        config["rewards"]["trace_acc_apply_to"] = args.trace_acc_apply_to
 
     # Create experiment name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -175,7 +220,17 @@ def main():
     logger.info(f"Generation batch size: {args.gen_batch_size}")
     logger.info(f"torch.compile enabled: {not args.no_compile}")
     logger.info(f"Prompt template: {args.prompt_template}")
+    logger.info(f"Context template: {config['prompting'].get('context_template', 'standard')}")
     logger.info(f"Think reward enabled: {args.think_reward}")
+    logger.info(f"Log round rewards: {args.log_round_rewards}")
+    logger.info(f"Log reward components: {args.log_reward_components}")
+    logger.info(f"Prompt max length: {config.get('fast_training', {}).get('prompt_max_length', 1024)}")
+    logger.info(f"Logprob max length: {config.get('fast_training', {}).get('logprob_max_length', 2048)}")
+    logger.info(
+        f"Trace-acc reward: {config['rewards'].get('use_trace_acc_reward', False)} "
+        f"(w={config['rewards'].get('w_trace_acc', 0.0)}, "
+        f"apply_to={config['rewards'].get('trace_acc_apply_to', 'all')})"
+    )
 
     # Setup wandb
     if args.use_wandb:

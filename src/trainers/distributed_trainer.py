@@ -399,7 +399,7 @@ class DistributedCollaborativeTrainer(BaseCollabTrainer):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=1024,
+            max_length=self.prompt_max_length,
         ).to(self.accelerator.device)
 
         # Generate with synced_gpus for DeepSpeed
@@ -486,10 +486,7 @@ class DistributedCollaborativeTrainer(BaseCollabTrainer):
         teacher_contexts = []
         for q_idx, (question, best_trace) in enumerate(zip(questions, best_correct_traces)):
             if best_trace is not None:
-                context = self.micro_round.compress_trace(
-                    best_trace,
-                    include_answer=self.config["collaboration"]["include_answer_in_context"],
-                )
+                context = self.micro_round.build_teacher_context(best_trace)
                 teacher_contexts.append(context)
             else:
                 teacher_contexts.append(None)

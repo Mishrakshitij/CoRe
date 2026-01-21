@@ -30,6 +30,7 @@ class MicroRoundAResult:
     diverse_set_indices: List[int]
     best_correct_trace: Optional[str] = None
     best_correct_idx: Optional[int] = None
+    reward_details: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -40,6 +41,7 @@ class MicroRoundBResult:
     is_correct: List[bool]
     used_hint: List[bool]  # Whether each trace used the hint
     rescue_success: bool = False
+    reward_details: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +87,12 @@ class MicroRoundManager:
         # Context compression
         self.max_context_tokens = config["collaboration"]["max_context_tokens"]
         self.include_answer = config["collaboration"]["include_answer_in_context"]
+        self.use_full_trace_hint = config["collaboration"].get("use_full_trace_hint", False)
+        self.hint_prefix = config["collaboration"].get("hint_prefix", None)
+        self.strip_answer_from_hint = config["collaboration"].get(
+            "strip_answer_from_hint",
+            not self.include_answer,
+        )
 
         # Round B settings
         self.round_b_exploit_boost = config["collaboration"].get(
@@ -127,13 +135,57 @@ class MicroRoundManager:
                 parts.append(f"Answer: {answer}")
 
         context = "\n".join(parts)
+        return self._truncate_context(context)
 
-        # Truncate if too long (rough token estimate)
-        words = context.split()
+    def _build_reward_details(self, results: List[Any]) -> List[Dict[str, Any]]:
+        """Extract reward component details for logging."""
+        details = []
+        for res in results:
+            entry: Dict[str, Any] = {}
+            if hasattr(res, "total_reward"):
+                entry["total"] = res.total_reward
+            if hasattr(res, "exploit_reward"):
+                entry["exploit"] = res.exploit_reward
+            if hasattr(res, "explore_reward"):
+                entry["explore"] = res.explore_reward
+            if hasattr(res, "cross_reward"):
+                entry["cross"] = res.cross_reward
+            if hasattr(res, "think_reward"):
+                entry["think"] = res.think_reward
+            if hasattr(res, "rescue_bonus"):
+                entry["rescue_bonus"] = res.rescue_bonus
+            if hasattr(res, "correctness_reward"):
+                entry["correctness"] = res.correctness_reward
+            if hasattr(res, "diversity_reward"):
+                entry["diversity"] = res.diversity_reward
+            if hasattr(res, "consistency_reward"):
+                entry["consistency"] = res.consistency_reward
+            if hasattr(res, "format_reward"):
+                entry["format"] = res.format_reward
+            if hasattr(res, "metadata") and isinstance(res.metadata, dict):
+                if "trace_acc" in res.metadata:
+                    entry["trace_acc"] = res.metadata["trace_acc"]
+                if "trace_acc_reward" in res.metadata:
+                    entry["trace_acc_reward"] = res.metadata["trace_acc_reward"]
+            details.append(entry)
+        return details
+
+    def build_teacher_context(self, trace: str) -> str:
+        """Build teacher context for Round B based on config."""
+        if self.use_full_trace_hint:
+            context = trace
+            if self.strip_answer_from_hint:
+                context = self._strip_explicit_answer(context)
+            return self._truncate_context(context)
+
+        return self.compress_trace(trace, include_answer=self.include_answer)
+
+    def _truncate_context(self, text: str) -> str:
+        """Truncate context by rough token estimate (word count)."""
+        words = text.split()
         if len(words) > self.max_context_tokens:
-            context = " ".join(words[:self.max_context_tokens])
-
-        return context
+            return " ".join(words[:self.max_context_tokens])
+        return text
 
     def _extract_operations(self, trace: str) -> List[str]:
         """Extract mathematical/reasoning operations."""
@@ -198,6 +250,14 @@ class MicroRoundManager:
 
         return None
 
+    def _strip_explicit_answer(self, trace: str) -> str:
+        """Remove explicit answer lines from a trace."""
+        cleaned = re.sub(r'\\boxed\{[^}]*\}', '', trace)
+        cleaned = re.sub(r'(?im)^\s*(?:final answer|answer)\s*:.*$', '', cleaned)
+        cleaned = re.sub(r'(?im)^\s*####\s*.*$', '', cleaned)
+        lines = [line for line in cleaned.splitlines() if line.strip()]
+        return "\n".join(lines)
+
     def should_use_hint(self) -> bool:
         """Determine if hint should be used (hint dropout)."""
         return random.random() < self.p_hint
@@ -215,7 +275,8 @@ class MicroRoundManager:
         if self.multi_strategy:
             return format_multi_strategy_contexted_prompt(question, teacher_context)
         else:
-            return f"""Here's a helpful reasoning approach:
+            prefix = self.hint_prefix or "Here's a helpful reasoning approach:"
+            return f"""{prefix}
 {teacher_context}
 
 Now solve the following problem using a similar approach:
@@ -262,6 +323,7 @@ Let's solve this step by step:"""
 
         rewards = [r.total_reward for r in results]
         is_correct = [r.is_correct for r in results]
+        reward_details = self._build_reward_details(results)
 
         # Find best correct trace
         best_correct_trace = None
@@ -281,6 +343,7 @@ Let's solve this step by step:"""
             diverse_set_indices=diverse_indices,
             best_correct_trace=best_correct_trace,
             best_correct_idx=best_correct_idx,
+            reward_details=reward_details,
         )
 
     def process_round_b(
@@ -314,6 +377,7 @@ Let's solve this step by step:"""
 
         rewards = [r.total_reward for r in results]
         is_correct = [r.is_correct for r in results]
+        reward_details = self._build_reward_details(results)
 
         # Check if rescue was successful
         rescue_success = not round_a_had_correct and any(is_correct)
@@ -324,6 +388,7 @@ Let's solve this step by step:"""
             is_correct=is_correct,
             used_hint=used_hint,
             rescue_success=rescue_success,
+            reward_details=reward_details,
         )
 
     def combine_rounds(

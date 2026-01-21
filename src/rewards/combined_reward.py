@@ -65,6 +65,11 @@ class CombinedRewardFunction:
         self.think_reward_fn = ThinkReward(config) if self.use_think_reward else None
         self.w_think = config.get("w_think", 0.1)
 
+        # Trace-accuracy reward (fraction correct across K traces)
+        self.use_trace_acc_reward = config.get("use_trace_acc_reward", False)
+        self.w_trace_acc = config.get("w_trace_acc", 0.0)
+        self.trace_acc_apply_to = config.get("trace_acc_apply_to", "all")
+
         # Weights for epoch 1
         self.w_exploit_e1 = config.get("w_exploit_e1", 1.0)
         self.w_explore_e1 = config.get("w_explore_e1", 0.2)
@@ -183,6 +188,8 @@ class CombinedRewardFunction:
                 "epoch": self.current_epoch,
                 "is_rescue": is_rescue,
                 "use_think_reward": self.use_think_reward,
+                "trace_acc": 0.0,
+                "trace_acc_reward": 0.0,
             },
         )
 
@@ -216,6 +223,14 @@ class CombinedRewardFunction:
             traces, ground_truths, questions
         )
         exploit_rewards = [r.reward for r in exploit_results]
+
+        # Trace-accuracy reward (fraction correct across traces)
+        trace_acc = 0.0
+        trace_acc_reward = 0.0
+        if self.use_trace_acc_reward and exploit_results:
+            correct_count = sum(1 for r in exploit_results if r.is_correct)
+            trace_acc = correct_count / max(1, len(exploit_results))
+            trace_acc_reward = self.w_trace_acc * trace_acc
 
         # Build diverse set using DPP-lite
         explore_results, diverse_set_indices = self.explore_reward.batch_compute(
@@ -267,12 +282,21 @@ class CombinedRewardFunction:
             if is_rescue and exploit_res.is_correct:
                 rescue_bonus = self.r_teach
 
+            # Trace-accuracy reward (apply to all or correct-only)
+            trace_acc_bonus = 0.0
+            if self.use_trace_acc_reward and trace_acc_reward != 0.0:
+                if self.trace_acc_apply_to == "correct" and not exploit_res.is_correct:
+                    trace_acc_bonus = 0.0
+                else:
+                    trace_acc_bonus = trace_acc_reward
+
             total = (
                 w_exploit * exploit_res.reward +
                 w_explore * explore_res.reward +
                 w_cross * cross_reward_val +
                 think_reward_val +
-                rescue_bonus
+                rescue_bonus +
+                trace_acc_bonus
             )
 
             results.append(CombinedRewardResult(
@@ -291,6 +315,8 @@ class CombinedRewardFunction:
                     "trace_source": trace_sources[i] if trace_sources else "unknown",
                     "is_rescue": is_rescue,
                     "use_think_reward": self.use_think_reward,
+                    "trace_acc": trace_acc,
+                    "trace_acc_reward": trace_acc_bonus,
                 },
             ))
 

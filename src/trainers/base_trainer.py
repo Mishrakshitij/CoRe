@@ -184,6 +184,14 @@ class BaseCollabTrainer:
 
         # Generation config
         self.gen_config = config["generation"]
+        self.prompt_max_length = config.get("fast_training", {}).get(
+            "prompt_max_length",
+            config.get("generation", {}).get("prompt_max_length", 1024),
+        )
+        self.logprob_max_length = config.get("fast_training", {}).get(
+            "logprob_max_length",
+            config.get("generation", {}).get("logprob_max_length", 2048),
+        )
 
         # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -217,6 +225,9 @@ class BaseCollabTrainer:
                 w_consistency=self.prompting_config.get("ms_w_consistency", 1.5),
                 w_format=self.prompting_config.get("ms_w_format", 0.3),
                 diversity_threshold=self.prompting_config.get("diversity_threshold", 0.8),
+                use_trace_acc_reward=config.get("rewards", {}).get("use_trace_acc_reward", False),
+                w_trace_acc=config.get("rewards", {}).get("w_trace_acc", 0.0),
+                trace_acc_apply_to=config.get("rewards", {}).get("trace_acc_apply_to", "all"),
             )
         else:
             self.ms_reward_fn = None
@@ -411,6 +422,10 @@ class BaseCollabTrainer:
         """Load all models specified in config."""
         # Check for custom GPU mapping
         gpu_mapping = self.config.get("training", {}).get("model_gpu_mapping", {})
+        # QLoRA settings (used for reference models too)
+        use_qlora = self.config.get("training", {}).get("use_qlora", False)
+        qlora_bits = self.config.get("training", {}).get("qlora_bits", 4)
+        max_memory_per_gpu = self.config.get("training", {}).get("max_memory_per_gpu", None)
 
         for i, model_config in enumerate(self.model_configs):
             model_id = f"M{i+1}"
@@ -423,39 +438,73 @@ class BaseCollabTrainer:
 
             # Create reference model (frozen copy) for KL divergence
             use_mistral3 = is_mistral3_model(model_name) and MISTRAL3_AVAILABLE
+            gpu_ids = gpu_mapping.get(model_id, None)
 
             # Determine device_map for reference model
+            max_memory = None
             if use_mistral3:
                 ref_device_map = "auto"
-            else:
-                gpu_ids = gpu_mapping.get(model_id, None)
-                if gpu_ids:
-                    ref_device_map = build_device_map_for_gpus(model_name, gpu_ids)
+                if gpu_ids and max_memory_per_gpu:
+                    max_memory = {gpu: max_memory_per_gpu for gpu in gpu_ids}
+            elif use_qlora and gpu_ids:
+                # For quantized ref models, prefer auto + max_memory on assigned GPUs
+                ref_device_map = "auto"
+                if max_memory_per_gpu:
+                    max_memory = {gpu: max_memory_per_gpu for gpu in gpu_ids}
                 else:
-                    ref_device_map = "auto"
+                    max_memory = {gpu: "40GB" for gpu in gpu_ids}
+            elif gpu_ids:
+                ref_device_map = build_device_map_for_gpus(model_name, gpu_ids)
+            else:
+                ref_device_map = "auto"
 
-            # For Mistral3, use 4-bit quantization for reference model to save memory
-            if use_mistral3:
+            # Use quantization for ref models when configured or for Mistral3 to save memory
+            quantization_config = None
+            if use_qlora or use_mistral3:
                 from transformers import BitsAndBytesConfig
+                if use_qlora:
+                    load_in_4bit = (qlora_bits == 4)
+                    load_in_8bit = (qlora_bits == 8)
+                else:
+                    load_in_4bit = True
+                    load_in_8bit = False
+                bnb_kwargs = {}
+                if load_in_4bit:
+                    bnb_kwargs = {
+                        "bnb_4bit_compute_dtype": torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
+                        "bnb_4bit_use_double_quant": True,
+                        "bnb_4bit_quant_type": "nf4",
+                    }
                 quantization_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
+                    load_in_4bit=load_in_4bit,
+                    load_in_8bit=load_in_8bit,
+                    **bnb_kwargs,
                 )
-                logger.info(f"Loading reference model {model_id} with 4-bit quantization to save memory")
+                if use_qlora:
+                    logger.info(f"Loading reference model {model_id} with {qlora_bits}-bit quantization")
+                else:
+                    logger.info(f"Loading reference model {model_id} with 4-bit quantization to save memory")
+
+            ref_load_kwargs = {
+                "trust_remote_code": True,
+                "device_map": ref_device_map,
+            }
+            if quantization_config is not None:
+                ref_load_kwargs["quantization_config"] = quantization_config
+            else:
+                ref_load_kwargs["torch_dtype"] = torch.bfloat16 if self.config["training"]["bf16"] else torch.float16
+            if max_memory is not None:
+                ref_load_kwargs["max_memory"] = max_memory
+
+            if use_mistral3:
                 ref_model = Mistral3ForConditionalGeneration.from_pretrained(
                     model_name,
-                    quantization_config=quantization_config,
-                    trust_remote_code=True,
-                    device_map=ref_device_map,
+                    **ref_load_kwargs,
                 )
             else:
                 ref_model = AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    torch_dtype=torch.bfloat16 if self.config["training"]["bf16"] else torch.float16,
-                    trust_remote_code=True,
-                    device_map=ref_device_map,
+                    **ref_load_kwargs,
                 )
             ref_model.eval()
             for param in ref_model.parameters():
@@ -538,7 +587,7 @@ class BaseCollabTrainer:
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=1024,
+                max_length=self.prompt_max_length,
             ).to(model.device)
 
             # Generate multiple traces
@@ -612,7 +661,7 @@ class BaseCollabTrainer:
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=2048,
+            max_length=self.logprob_max_length,
         ).to(model.device)
 
         prompt_encodings = tokenizer(
@@ -620,7 +669,7 @@ class BaseCollabTrainer:
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=1024,
+            max_length=self.prompt_max_length,
         )
 
         # Forward pass
