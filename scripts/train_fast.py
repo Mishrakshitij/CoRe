@@ -107,6 +107,12 @@ def main():
         help="Path to checkpoint directory to resume training from",
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Override output directory (no automatic experiment subdir)",
+    )
+    parser.add_argument(
         "--prompt-template",
         type=str,
         default="standard",
@@ -204,6 +210,10 @@ def main():
     if args.resume:
         output_dir = Path(args.resume).parent
         logger.info(f"Resuming from checkpoint: {args.resume}")
+    elif args.output_dir:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        experiment_name = output_dir.name
     else:
         output_dir = Path(config["project"]["output_dir"]) / experiment_name
         output_dir.mkdir(parents=True, exist_ok=True)

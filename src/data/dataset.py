@@ -10,7 +10,7 @@ import random
 from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset
+from datasets import load_dataset, Dataset as HFDataset, config as hf_datasets_config
 import logging
 
 from .preprocessing import extract_boxed_content
@@ -234,21 +234,51 @@ class ReasoningDataset(Dataset):
         }
         config = config_map.get(difficulty, "gpqa_diamond")
 
+        def _load_cached_gpqa(config_name: str) -> Optional[HFDataset]:
+            cache_root = Path(hf_datasets_config.HF_DATASETS_CACHE)
+            base_dir = cache_root / "Idavidrein___gpqa" / config_name
+            if not base_dir.exists():
+                return None
+            arrow_files = sorted(base_dir.rglob("*.arrow"))
+            if not arrow_files:
+                return None
+            preferred = None
+            for arrow_path in arrow_files:
+                if arrow_path.name.endswith("train.arrow"):
+                    preferred = arrow_path
+                    break
+            if preferred is None:
+                preferred = arrow_files[0]
+            logger.info(f"Loading GPQA from local cache: {preferred}")
+            return HFDataset.from_file(str(preferred))
+
         # GPQA only has train split, we'll split it ourselves
         # Note: GPQA is a gated dataset - requires HuggingFace authentication
         # Run: huggingface-cli login and request access at https://huggingface.co/datasets/Idavidrein/gpqa
-        try:
-            full_dataset = load_dataset("Idavidrein/gpqa", config, split="train", trust_remote_code=True)
-        except Exception as e:
-            error_msg = str(e)
-            if "gated" in error_msg.lower() or "authenticated" in error_msg.lower():
-                raise RuntimeError(
-                    f"GPQA is a gated dataset. To access it:\n"
-                    f"1. Run: huggingface-cli login\n"
-                    f"2. Request access at: https://huggingface.co/datasets/Idavidrein/gpqa\n"
-                    f"Original error: {e}"
-                )
-            raise
+        full_dataset = _load_cached_gpqa(config)
+        if full_dataset is None:
+            try:
+                full_dataset = load_dataset("Idavidrein/gpqa", config, split="train", trust_remote_code=True)
+            except Exception as e:
+                error_msg = str(e)
+                if "trust_remote_code" in error_msg or "loading script" in error_msg:
+                    cached = _load_cached_gpqa(config)
+                    if cached is not None:
+                        full_dataset = cached
+                    else:
+                        raise RuntimeError(
+                            f"GPQA local cache not found for config '{config}'. "
+                            f"Original error: {e}"
+                        )
+                elif "gated" in error_msg.lower() or "authenticated" in error_msg.lower():
+                    raise RuntimeError(
+                        f"GPQA is a gated dataset. To access it:\n"
+                        f"1. Run: huggingface-cli login\n"
+                        f"2. Request access at: https://huggingface.co/datasets/Idavidrein/gpqa\n"
+                        f"Original error: {e}"
+                    )
+                else:
+                    raise
 
         # Split into train/test (80:20)
         total_samples = len(full_dataset)

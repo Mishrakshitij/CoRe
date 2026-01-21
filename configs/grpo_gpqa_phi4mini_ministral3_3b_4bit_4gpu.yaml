@@ -1,15 +1,15 @@
-# GRPO Training: Phi-4-reasoning-plus + Ministral-14B on GPQA with QLoRA (4 GPUs)
-# ============================================================================
-# Two 14B reasoning models trained collaboratively using 4-bit quantization
-# M1 (Phi-4-reasoning-plus) on GPUs 0-1, M2 (Ministral-14B) on GPUs 2-3
+# GRPO Training: Phi-4-mini-reasoning + Ministral-3-3B on GPQA with QLoRA (4 GPUs)
+# ==============================================================================
+# Two reasoning models trained collaboratively using 4-bit quantization
+# M1 (Phi-4-mini-reasoning) on GPUs 0-1, M2 (Ministral-3-3B) on GPUs 2-3
 #
 # Notes:
-# - Use CUDA_VISIBLE_DEVICES=0,1,4,5 so GPU indices map to 0,1,2,3
-# - max_new_tokens=4096 as requested
-# - context compression length = 2048 (word-based truncation)
+# - Use CUDA_VISIBLE_DEVICES=0,2,3,6 so GPU indices map to 0,1,2,3
+# - max_new_tokens=2048 as requested
+# - context hint length target = 1024 (word-based truncation)
 
 project:
-  name: "phi4plus-ministral14b-gpqa-4bit-4gpu"
+  name: "phi4mini-ministral3-3b-gpqa-4bit-4gpu"
   seed: 42
   output_dir: "./outputs"
   log_dir: "./logs"
@@ -17,18 +17,18 @@ project:
 
 models:
   available:
-    phi4_reasoning_plus:
-      name: "microsoft/Phi-4-reasoning-plus"
+    phi4_mini_reasoning:
+      name: "microsoft/Phi-4-mini-reasoning"
       type: "phi4"
-      size: "14B"
+      size: "3B"
       generation:
         temperature: 0.8
         top_k: 50
         top_p: 0.95
-    ministral_14b_reasoning:
-      name: "mistralai/Ministral-3-14B-Reasoning-2512"
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
       type: "mistral3"
-      size: "14B"
+      size: "3B"
       generation:
         temperature: 0.7
         top_p: 0.9
@@ -40,8 +40,8 @@ training:
   val_split: 0.0
   test_split: 0.0
 
-  num_epochs: 5
-  batch_size: 1
+  num_epochs: 1
+  batch_size: 2
   gradient_accumulation_steps: 8
 
   model_gpu_mapping:
@@ -104,7 +104,7 @@ rewards:
 collaboration:
   num_models: 2
   p_hint: 1.0
-  max_context_tokens: 2048
+  max_context_tokens: 1024
   include_answer_in_context: false
   use_full_trace_hint: true
   strip_answer_from_hint: true
@@ -128,7 +128,7 @@ distance:
   ngram_n: 3
 
 generation:
-  max_new_tokens: 4096
+  max_new_tokens: 2048
   temperature: 0.7
   top_p: 0.9
   top_k: 50
@@ -154,7 +154,7 @@ evaluation:
   generate_traces_for_eval: true
 
 fast_training:
-  gen_batch_size: 1
+  gen_batch_size: 2
   prompt_max_length: 1024
   logprob_max_length: 2048
   log_round_rewards: true

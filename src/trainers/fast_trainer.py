@@ -68,6 +68,7 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
 
         # Optimization flags
         self.use_compile = use_compile
+        self._warned_base_prompt_overflow = set()
 
         # Micro-round manager
         self.micro_round = MicroRoundManager(config)
@@ -116,6 +117,80 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
 
         return model, tokenizer
 
+    def _truncate_text_by_tokens(
+        self,
+        tokenizer,
+        text: str,
+        max_tokens: int,
+        truncation_side: str = "right",
+    ) -> str:
+        """Truncate text to a token budget using the model tokenizer."""
+        if max_tokens <= 0:
+            return ""
+        token_ids = tokenizer(text, add_special_tokens=False).input_ids
+        if len(token_ids) <= max_tokens:
+            return text
+        if truncation_side == "left":
+            token_ids = token_ids[-max_tokens:]
+        else:
+            token_ids = token_ids[:max_tokens]
+        return tokenizer.decode(token_ids, skip_special_tokens=True)
+
+    def _build_contexted_prompt(
+        self,
+        model_id: str,
+        question: str,
+        context: str,
+        effective_context_template: str,
+        hint_prefix: Optional[str],
+        use_full_trace_hint: bool,
+        dataset: str,
+        multi_strategy: bool,
+    ) -> str:
+        """Build a contexted prompt string for Round B generation."""
+        tokenizer = self.tokenizers[model_id]
+        model_name = self.model_configs_dict.get(model_id, {}).get("name", "")
+        effective_hint_prefix = hint_prefix
+
+        if effective_context_template in ("phi-chat", "mistral-chat"):
+            if effective_hint_prefix is None:
+                if use_full_trace_hint:
+                    effective_hint_prefix = (
+                        "A peer model solved this correctly. "
+                        "Use its reasoning as guidance and follow a similar approach."
+                    )
+                else:
+                    effective_hint_prefix = "A peer model provided this helpful approach:"
+            contexted_question = (
+                f"{effective_hint_prefix}\n\n"
+                f"<peer_hint>\n{context}\n</peer_hint>\n\n"
+                f"{question}"
+            )
+            if effective_context_template == "phi-chat" and is_phi4_model(model_name):
+                return format_phi4_prompt(
+                    question=contexted_question,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    multi_strategy=multi_strategy,
+                )
+            if effective_context_template == "mistral-chat" and is_mistral3_model(model_name):
+                return format_mistral3_prompt(
+                    question=contexted_question,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    multi_strategy=multi_strategy,
+                )
+            return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
+        if effective_hint_prefix is None and use_full_trace_hint:
+            effective_hint_prefix = "Use the following reasoning trace as guidance."
+        if effective_hint_prefix:
+            return (
+                f"{effective_hint_prefix}\n\n{context}\n\n"
+                f"Question: {question}\n\nLet's solve this step by step:"
+            )
+        return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
     def _format_prompt_for_model(
         self,
         model_id: str,
@@ -148,6 +223,18 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         context_template = self.config.get("prompting", {}).get("context_template", "standard")
         use_full_trace_hint = self.config.get("collaboration", {}).get("use_full_trace_hint", False)
         hint_prefix = self.config.get("collaboration", {}).get("hint_prefix", None)
+        truncate_hint_to_fit = self.config.get("collaboration", {}).get(
+            "truncate_hint_to_fit",
+            False,
+        )
+        hint_truncation_side = self.config.get("collaboration", {}).get(
+            "hint_truncation_side",
+            "right",
+        )
+        log_hint_stats = self.config.get("fast_training", {}).get(
+            "log_hint_stats",
+            False,
+        )
 
         if context:
             # Contexted generation with teacher hint (optional chat template)
@@ -167,45 +254,65 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 else:
                     effective_context_template = "standard"
 
-            if effective_context_template in ("phi-chat", "mistral-chat"):
-                if hint_prefix is None:
-                    if use_full_trace_hint:
-                        hint_prefix = (
-                            "A peer model solved this correctly. "
-                            "Use its reasoning as guidance and follow a similar approach."
+            prompt = self._build_contexted_prompt(
+                model_id=model_id,
+                question=question,
+                context=context,
+                effective_context_template=effective_context_template,
+                hint_prefix=hint_prefix,
+                use_full_trace_hint=use_full_trace_hint,
+                dataset=dataset,
+                multi_strategy=multi_strategy,
+            )
+
+            if truncate_hint_to_fit and self.prompt_max_length:
+                full_len = len(tokenizer(prompt, truncation=False).input_ids)
+                if full_len > self.prompt_max_length:
+                    base_prompt = self._build_contexted_prompt(
+                        model_id=model_id,
+                        question=question,
+                        context="",
+                        effective_context_template=effective_context_template,
+                        hint_prefix=hint_prefix,
+                        use_full_trace_hint=use_full_trace_hint,
+                        dataset=dataset,
+                        multi_strategy=multi_strategy,
+                    )
+                    base_len = len(tokenizer(base_prompt, truncation=False).input_ids)
+                    if base_len > self.prompt_max_length and model_id not in self._warned_base_prompt_overflow:
+                        self._warned_base_prompt_overflow.add(model_id)
+                        logger.warning(
+                            "Base prompt exceeds prompt_max_length without hint: "
+                            f"model_id={model_id}, base_len={base_len}, "
+                            f"prompt_max_length={self.prompt_max_length}, "
+                            f"context_template={effective_context_template}, "
+                            f"multi_strategy={multi_strategy}"
                         )
-                    else:
-                        hint_prefix = "A peer model provided this helpful approach:"
-                contexted_question = (
-                    f"{hint_prefix}\n\n"
-                    f"<peer_hint>\n{context}\n</peer_hint>\n\n"
-                    f"{question}"
-                )
-            else:
-                if hint_prefix is None and use_full_trace_hint:
-                    hint_prefix = "Use the following reasoning trace as guidance."
-                if hint_prefix:
-                    return f"{hint_prefix}\n\n{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
-                return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+                    max_context_tokens = max(self.prompt_max_length - base_len, 0)
+                    trimmed_context = self._truncate_text_by_tokens(
+                        tokenizer=tokenizer,
+                        text=context,
+                        max_tokens=max_context_tokens,
+                        truncation_side=hint_truncation_side,
+                    )
+                    prompt = self._build_contexted_prompt(
+                        model_id=model_id,
+                        question=question,
+                        context=trimmed_context,
+                        effective_context_template=effective_context_template,
+                        hint_prefix=hint_prefix,
+                        use_full_trace_hint=use_full_trace_hint,
+                        dataset=dataset,
+                        multi_strategy=multi_strategy,
+                    )
+                    if log_hint_stats:
+                        logger.info(
+                            "Truncated peer hint to fit prompt_max_length: "
+                            f"full_len={full_len}, base_len={base_len}, "
+                            f"max_context_tokens={max_context_tokens}"
+                        )
 
-            if effective_context_template == "phi-chat" and is_phi4_model(model_name):
-                return format_phi4_prompt(
-                    question=contexted_question,
-                    tokenizer=tokenizer,
-                    dataset=dataset,
-                    multi_strategy=multi_strategy,
-                )
-
-            if effective_context_template == "mistral-chat" and is_mistral3_model(model_name):
-                return format_mistral3_prompt(
-                    question=contexted_question,
-                    tokenizer=tokenizer,
-                    dataset=dataset,
-                    multi_strategy=multi_strategy,
-                )
-
-            # Default: plain context + question (current behavior)
-            return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+            return prompt
 
         # Auto-detect template type based on model name
         if template_type == "auto":
@@ -554,6 +661,27 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 teacher_contexts.append(context)
 
         if contexted_questions:
+            log_hint_stats = self.config.get("fast_training", {}).get(
+                "log_hint_stats",
+                False,
+            )
+            if log_hint_stats and teacher_contexts:
+                for model_id in self.models:
+                    tokenizer = self.tokenizers[model_id]
+                    lengths = [
+                        len(tokenizer(tc, add_special_tokens=False).input_ids)
+                        for tc in teacher_contexts
+                    ]
+                    if lengths:
+                        summary = (
+                            f"min={min(lengths)}, mean={np.mean(lengths):.1f}, "
+                            f"max={max(lengths)}, count={len(lengths)}"
+                        )
+                        if len(lengths) <= 10:
+                            summary = f"{summary}, values={lengths}"
+                        logger.info(
+                            f"[Step {step}] {model_id} peer_hint_tokens: {summary}"
+                        )
             for model_id in self.models:
                 # Generate contexted traces for each question with hint dropout
                 for i, (q_idx, question, context) in enumerate(
