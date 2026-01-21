@@ -109,6 +109,9 @@ class MultiStrategyReward:
         w_format: float = 0.3,
         diversity_threshold: float = 0.8,
         use_semantic_diversity: bool = True,
+        use_trace_acc_reward: bool = False,
+        w_trace_acc: float = 0.0,
+        trace_acc_apply_to: str = "all",
     ):
         """
         Initialize multi-strategy reward.
@@ -127,6 +130,9 @@ class MultiStrategyReward:
         self.w_format = w_format
         self.diversity_threshold = diversity_threshold
         self.use_semantic_diversity = use_semantic_diversity and HAS_SENTENCE_TRANSFORMER
+        self.use_trace_acc_reward = use_trace_acc_reward
+        self.w_trace_acc = w_trace_acc
+        self.trace_acc_apply_to = trace_acc_apply_to
 
     def compute_correctness_reward(
         self,
@@ -373,6 +379,17 @@ class MultiStrategyReward:
                 )
 
             results.append(result)
+
+        # Trace-accuracy reward (fraction correct across traces)
+        if self.use_trace_acc_reward and results:
+            correct_count = sum(1 for r in results if r.any_strategy_correct)
+            trace_acc = correct_count / max(1, len(results))
+            trace_acc_reward = self.w_trace_acc * trace_acc
+            if trace_acc_reward != 0.0:
+                for result in results:
+                    if self.trace_acc_apply_to == "correct" and not result.any_strategy_correct:
+                        continue
+                    result.total_reward += trace_acc_reward
 
         # Return diverse indices (all indices for multi-strategy since diversity is internal)
         diverse_indices = list(range(len(results)))
