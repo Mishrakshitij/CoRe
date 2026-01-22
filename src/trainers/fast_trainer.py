@@ -69,6 +69,7 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         # Optimization flags
         self.use_compile = use_compile
         self._warned_base_prompt_overflow = set()
+        self._warned_cross_partner_fallback = False
 
         # Micro-round manager
         self.micro_round = MicroRoundManager(config)
@@ -190,6 +191,106 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 f"Question: {question}\n\nLet's solve this step by step:"
             )
         return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
+
+    def _get_cross_reward_settings(self) -> Tuple[str, str]:
+        """Fetch cross-reward scope and partner selection from config."""
+        scope = self.config.get("collaboration", {}).get("cross_reward_scope", "none")
+        partner = self.config.get("collaboration", {}).get("cross_reward_partner", "all")
+        return str(scope).lower(), str(partner).lower()
+
+    def _compute_exploit_info(
+        self,
+        traces_by_model: Dict[str, List[Optional[List[str]]]],
+        questions: List[str],
+        ground_truths: List[str],
+    ) -> Optional[Dict[str, List[Optional[List[Any]]]]]:
+        """Compute exploit results for traces, keyed by model and question."""
+        if not hasattr(self.reward_fn, "exploit_reward"):
+            if not self._warned_cross_partner_fallback:
+                self._warned_cross_partner_fallback = True
+                logger.warning(
+                    "Cross-reward partner filtering requested but exploit_reward "
+                    "is unavailable; falling back to unfiltered partner traces."
+                )
+            return None
+
+        exploit_info: Dict[str, List[Optional[List[Any]]]] = {}
+        for model_id, traces_per_q in traces_by_model.items():
+            exploit_info[model_id] = []
+            for q_idx, traces in enumerate(traces_per_q):
+                if not traces:
+                    exploit_info[model_id].append(None)
+                    continue
+                gt = ground_truths[q_idx]
+                question = questions[q_idx]
+                results = self.reward_fn.exploit_reward.batch_compute(
+                    traces, [gt] * len(traces), [question] * len(traces)
+                )
+                exploit_info[model_id].append(results)
+        return exploit_info
+
+    def _select_partner_traces(
+        self,
+        model_id: str,
+        q_idx: int,
+        traces_by_model: Dict[str, List[Optional[List[str]]]],
+        exploit_info_by_model: Optional[Dict[str, List[Optional[List[Any]]]]],
+        partner_selection: str,
+    ) -> Tuple[List[str], Optional[List[float]]]:
+        """Select partner traces and rewards based on the selection policy."""
+        partner_traces: List[str] = []
+        partner_rewards: Optional[List[float]] = [] if exploit_info_by_model else None
+
+        if partner_selection not in ("all", "correct", "best"):
+            partner_selection = "all"
+
+        if exploit_info_by_model is None and partner_selection != "all":
+            if not self._warned_cross_partner_fallback:
+                self._warned_cross_partner_fallback = True
+                logger.warning(
+                    "Cross-reward partner selection requires exploit rewards; "
+                    "falling back to partner_selection='all'."
+                )
+            partner_selection = "all"
+
+        for other_id, traces_per_q in traces_by_model.items():
+            if other_id == model_id:
+                continue
+            traces = traces_per_q[q_idx] if q_idx < len(traces_per_q) else None
+            if not traces:
+                continue
+
+            if partner_selection == "all" or exploit_info_by_model is None:
+                partner_traces.extend(traces)
+                if partner_rewards is not None:
+                    results = exploit_info_by_model[other_id][q_idx]
+                    if results:
+                        partner_rewards.extend([r.reward for r in results])
+                continue
+
+            results = exploit_info_by_model[other_id][q_idx]
+            if not results:
+                continue
+
+            if partner_selection == "correct":
+                for trace, res in zip(traces, results):
+                    if res.is_correct:
+                        partner_traces.append(trace)
+                        if partner_rewards is not None:
+                            partner_rewards.append(res.reward)
+            elif partner_selection == "best":
+                best_idx = None
+                best_reward = None
+                for idx, res in enumerate(results):
+                    if res.is_correct and (best_reward is None or res.reward > best_reward):
+                        best_idx = idx
+                        best_reward = res.reward
+                if best_idx is not None:
+                    partner_traces.append(traces[best_idx])
+                    if partner_rewards is not None:
+                        partner_rewards.append(results[best_idx].reward)
+
+        return partner_traces, partner_rewards
 
     def _format_prompt_for_model(
         self,
@@ -575,6 +676,9 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         }
 
         batch_size = len(questions)
+        cross_scope, cross_partner = self._get_cross_reward_settings()
+        use_cross_round_a = cross_scope in ("round_a", "both")
+        use_cross_round_b = cross_scope in ("round_b", "both")
 
         # ========== Micro-round A: Batched Cold Generation ==========
         logger.info(f"[Step {step}] Starting Round A generation")
@@ -583,29 +687,72 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         best_correct_models = [None] * batch_size
         any_correct = [False] * batch_size
 
-        for model_id in self.models:
-            # Generate K traces for ALL questions at once
-            all_traces = self.generate_traces_batched(
-                model_id=model_id,
-                questions=questions,
-                num_traces=self.K,
+        if use_cross_round_a:
+            all_traces_by_model: Dict[str, List[List[str]]] = {}
+            for model_id in self.models:
+                all_traces_by_model[model_id] = self.generate_traces_batched(
+                    model_id=model_id,
+                    questions=questions,
+                    num_traces=self.K,
+                )
+
+            exploit_info_by_model = self._compute_exploit_info(
+                all_traces_by_model, questions, ground_truths
             )
 
-            round_a_results[model_id] = []
-            for q_idx, (question, gt, traces) in enumerate(zip(questions, ground_truths, all_traces)):
-                round_a = self.micro_round.process_round_a(
-                    traces=traces,
-                    ground_truth=gt,
-                    question=question,
-                    reward_fn=self.reward_fn,
-                )
-                round_a_results[model_id].append(round_a)
+            for model_id in self.models:
+                round_a_results[model_id] = []
+                for q_idx, (question, gt, traces) in enumerate(
+                    zip(questions, ground_truths, all_traces_by_model[model_id])
+                ):
+                    partner_traces, partner_rewards = self._select_partner_traces(
+                        model_id=model_id,
+                        q_idx=q_idx,
+                        traces_by_model=all_traces_by_model,
+                        exploit_info_by_model=exploit_info_by_model,
+                        partner_selection=cross_partner,
+                    )
+                    round_a = self.micro_round.process_round_a(
+                        traces=traces,
+                        ground_truth=gt,
+                        question=question,
+                        reward_fn=self.reward_fn,
+                        partner_traces=partner_traces,
+                        partner_exploit_rewards=partner_rewards,
+                    )
+                    round_a_results[model_id].append(round_a)
 
-                if round_a.best_correct_trace is not None:
-                    any_correct[q_idx] = True
-                    if best_correct_traces[q_idx] is None:
-                        best_correct_traces[q_idx] = round_a.best_correct_trace
-                        best_correct_models[q_idx] = model_id
+                    if round_a.best_correct_trace is not None:
+                        any_correct[q_idx] = True
+                        if best_correct_traces[q_idx] is None:
+                            best_correct_traces[q_idx] = round_a.best_correct_trace
+                            best_correct_models[q_idx] = model_id
+        else:
+            for model_id in self.models:
+                # Generate K traces for ALL questions at once
+                all_traces = self.generate_traces_batched(
+                    model_id=model_id,
+                    questions=questions,
+                    num_traces=self.K,
+                )
+
+                round_a_results[model_id] = []
+                for q_idx, (question, gt, traces) in enumerate(
+                    zip(questions, ground_truths, all_traces)
+                ):
+                    round_a = self.micro_round.process_round_a(
+                        traces=traces,
+                        ground_truth=gt,
+                        question=question,
+                        reward_fn=self.reward_fn,
+                    )
+                    round_a_results[model_id].append(round_a)
+
+                    if round_a.best_correct_trace is not None:
+                        any_correct[q_idx] = True
+                        if best_correct_traces[q_idx] is None:
+                            best_correct_traces[q_idx] = round_a.best_correct_trace
+                            best_correct_models[q_idx] = model_id
 
         if self.log_round_rewards:
             for model_id in self.models:
@@ -682,61 +829,152 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                         logger.info(
                             f"[Step {step}] {model_id} peer_hint_tokens: {summary}"
                         )
-            for model_id in self.models:
-                # Generate contexted traces for each question with hint dropout
-                for i, (q_idx, question, context) in enumerate(
-                    zip(contexted_indices, contexted_questions, teacher_contexts)
-                ):
-                    # Apply hint dropout like the original trainer
-                    traces_b = []
-                    used_hint = []
+            if use_cross_round_b:
+                round_b_traces_by_model: Dict[str, List[Optional[List[str]]]] = {
+                    model_id: [None] * batch_size for model_id in self.models
+                }
+                round_b_used_hints_by_model: Dict[str, List[Optional[List[bool]]]] = {
+                    model_id: [None] * batch_size for model_id in self.models
+                }
 
-                    for _ in range(self.K_prime):
-                        use_hint = self.micro_round.should_use_hint()
-                        used_hint.append(use_hint)
+                for model_id in self.models:
+                    # Generate contexted traces for each question with hint dropout
+                    for q_idx, question, context in zip(
+                        contexted_indices, contexted_questions, teacher_contexts
+                    ):
+                        traces_b = []
+                        used_hint = []
 
-                        if use_hint:
-                            # Generate with context
-                            trace_list = self.generate_traces_batched(
-                                model_id=model_id,
-                                questions=[question],
-                                num_traces=1,
-                                context=context,
-                            )[0]
-                        else:
-                            # Generate without context (hint dropout)
-                            trace_list = self.generate_traces_batched(
-                                model_id=model_id,
-                                questions=[question],
-                                num_traces=1,
-                                context=None,
-                            )[0]
-                        traces_b.append(trace_list[0] if trace_list else "")
+                        for _ in range(self.K_prime):
+                            use_hint = self.micro_round.should_use_hint()
+                            used_hint.append(use_hint)
 
-                    gt = ground_truths[q_idx]
-                    round_a_had_correct = round_a_results[model_id][q_idx].best_correct_trace is not None
+                            if use_hint:
+                                trace_list = self.generate_traces_batched(
+                                    model_id=model_id,
+                                    questions=[question],
+                                    num_traces=1,
+                                    context=context,
+                                )[0]
+                            else:
+                                trace_list = self.generate_traces_batched(
+                                    model_id=model_id,
+                                    questions=[question],
+                                    num_traces=1,
+                                    context=None,
+                                )[0]
+                            traces_b.append(trace_list[0] if trace_list else "")
 
-                    round_b = self.micro_round.process_round_b(
-                        traces=traces_b,
-                        ground_truth=gt,
-                        question=question,
-                        reward_fn=self.reward_fn,
-                        used_hint=used_hint,
-                        round_a_had_correct=round_a_had_correct,
-                    )
-                    round_b_results[model_id][q_idx] = round_b
+                        round_b_traces_by_model[model_id][q_idx] = traces_b
+                        round_b_used_hints_by_model[model_id][q_idx] = used_hint
 
-                    if round_b.rescue_success:
-                        metrics["rescue_successes"] += 1
-                        self.buddy_buffer.add(
-                            question=question,
-                            teacher_context=context,
-                            rescued_model=model_id,
-                            source_model=best_correct_models[q_idx],
-                            original_trace=round_a_results[model_id][q_idx].traces[0] if round_a_results[model_id][q_idx].traces else "",
-                            rescue_trace=traces_b[0] if traces_b else "",
-                            step=step,
+                exploit_info_by_model = self._compute_exploit_info(
+                    round_b_traces_by_model, questions, ground_truths
+                )
+
+                for model_id in self.models:
+                    for q_idx, question, context in zip(
+                        contexted_indices, contexted_questions, teacher_contexts
+                    ):
+                        traces_b = round_b_traces_by_model[model_id][q_idx]
+                        used_hint = round_b_used_hints_by_model[model_id][q_idx]
+                        if traces_b is None or used_hint is None:
+                            continue
+
+                        partner_traces, partner_rewards = self._select_partner_traces(
+                            model_id=model_id,
+                            q_idx=q_idx,
+                            traces_by_model=round_b_traces_by_model,
+                            exploit_info_by_model=exploit_info_by_model,
+                            partner_selection=cross_partner,
                         )
+
+                        gt = ground_truths[q_idx]
+                        round_a_had_correct = (
+                            round_a_results[model_id][q_idx].best_correct_trace is not None
+                        )
+
+                        round_b = self.micro_round.process_round_b(
+                            traces=traces_b,
+                            ground_truth=gt,
+                            question=question,
+                            reward_fn=self.reward_fn,
+                            used_hint=used_hint,
+                            round_a_had_correct=round_a_had_correct,
+                            partner_traces=partner_traces,
+                            partner_exploit_rewards=partner_rewards,
+                        )
+                        round_b_results[model_id][q_idx] = round_b
+
+                        if round_b.rescue_success:
+                            metrics["rescue_successes"] += 1
+                            self.buddy_buffer.add(
+                                question=question,
+                                teacher_context=context,
+                                rescued_model=model_id,
+                                source_model=best_correct_models[q_idx],
+                                original_trace=round_a_results[model_id][q_idx].traces[0] if round_a_results[model_id][q_idx].traces else "",
+                                rescue_trace=traces_b[0] if traces_b else "",
+                                step=step,
+                            )
+            else:
+                for model_id in self.models:
+                    # Generate contexted traces for each question with hint dropout
+                    for q_idx, question, context in zip(
+                        contexted_indices, contexted_questions, teacher_contexts
+                    ):
+                        # Apply hint dropout like the original trainer
+                        traces_b = []
+                        used_hint = []
+
+                        for _ in range(self.K_prime):
+                            use_hint = self.micro_round.should_use_hint()
+                            used_hint.append(use_hint)
+
+                            if use_hint:
+                                # Generate with context
+                                trace_list = self.generate_traces_batched(
+                                    model_id=model_id,
+                                    questions=[question],
+                                    num_traces=1,
+                                    context=context,
+                                )[0]
+                            else:
+                                # Generate without context (hint dropout)
+                                trace_list = self.generate_traces_batched(
+                                    model_id=model_id,
+                                    questions=[question],
+                                    num_traces=1,
+                                    context=None,
+                                )[0]
+                            traces_b.append(trace_list[0] if trace_list else "")
+
+                        gt = ground_truths[q_idx]
+                        round_a_had_correct = (
+                            round_a_results[model_id][q_idx].best_correct_trace is not None
+                        )
+
+                        round_b = self.micro_round.process_round_b(
+                            traces=traces_b,
+                            ground_truth=gt,
+                            question=question,
+                            reward_fn=self.reward_fn,
+                            used_hint=used_hint,
+                            round_a_had_correct=round_a_had_correct,
+                        )
+                        round_b_results[model_id][q_idx] = round_b
+
+                        if round_b.rescue_success:
+                            metrics["rescue_successes"] += 1
+                            self.buddy_buffer.add(
+                                question=question,
+                                teacher_context=context,
+                                rescued_model=model_id,
+                                source_model=best_correct_models[q_idx],
+                                original_trace=round_a_results[model_id][q_idx].traces[0] if round_a_results[model_id][q_idx].traces else "",
+                                rescue_trace=traces_b[0] if traces_b else "",
+                                step=step,
+                            )
 
         if self.log_round_rewards:
             for model_id in self.models:
