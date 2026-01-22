@@ -347,6 +347,8 @@ Let's solve this step by step:"""
         ground_truth: str,
         question: str,
         reward_fn: Any,
+        partner_traces: Optional[List[str]] = None,
+        partner_exploit_rewards: Optional[List[float]] = None,
     ) -> MicroRoundAResult:
         """
         Process Micro-round A results.
@@ -365,6 +367,8 @@ Let's solve this step by step:"""
             traces=traces,
             ground_truths=[ground_truth] * len(traces),
             questions=[question] * len(traces),
+            partner_traces=partner_traces,
+            partner_exploit_rewards=partner_exploit_rewards,
         )
 
         rewards = [r.total_reward for r in results]
@@ -400,6 +404,8 @@ Let's solve this step by step:"""
         reward_fn: Any,
         used_hint: List[bool],
         round_a_had_correct: bool,
+        partner_traces: Optional[List[str]] = None,
+        partner_exploit_rewards: Optional[List[float]] = None,
     ) -> MicroRoundBResult:
         """
         Process Micro-round B results.
@@ -419,6 +425,8 @@ Let's solve this step by step:"""
             questions=[question] * len(traces),
             trace_sources=['contexted' if h else 'cold' for h in used_hint],
             round_a_had_correct=round_a_had_correct,
+            partner_traces=partner_traces,
+            partner_exploit_rewards=partner_exploit_rewards,
         )
 
         rewards = [r.total_reward for r in results]

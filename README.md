@@ -82,6 +82,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_fast.py \
 - `--prompt-template phi-chat`: Uses ChatML template for Phi-4 models to trigger `<think>...</think>` reasoning format
 - `--prompt-template auto`: Auto-detect template based on model name (recommended for mixed model training)
 - `--think-reward`: Adds diversity reward for thinking blocks (works with both `[THINK]` and `<think>` formats)
+- `--cross-reward-scope`: Enable cross reward with partner traces (`none`, `round_a`, `round_b`, `both`)
+- `--cross-reward-partner`: Partner trace selection for cross reward (`all`, `correct`, `best`)
 
 **Phi-4 Reasoning Models:**
 Microsoft's Phi-4 reasoning models use `<think>...</think>` tags for reasoning:
@@ -450,12 +452,16 @@ rewards:
   w_explore_e1: 0.2   # Epoch 1 explore weight
   w_exploit_e2: 1.0   # Epoch 2 exploit weight
   w_explore_e2: 0.05  # Epoch 2 explore weight (annealed)
+  w_cross_e1: 0.0     # Epoch 1 cross reward weight
+  w_cross_e2: 0.1     # Epoch 2 cross reward weight
   delta: 0.15         # DPP-lite margin
   r_teach: 0.15       # Rescue bonus
 
 collaboration:
   p_hint: 0.5              # Hint dropout probability
   max_context_tokens: 120  # Teacher context length
+  cross_reward_scope: "none"   # none, round_a, round_b, both
+  cross_reward_partner: "all"  # all, correct, best
   enable_distillation: false  # Optional: disable epoch-2 distillation (GRPO already learns from hints)
 ```
 

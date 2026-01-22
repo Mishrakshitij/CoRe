@@ -159,6 +159,20 @@ def main():
         action="store_true",
         help="Log per-trace reward component details during training",
     )
+    parser.add_argument(
+        "--cross-reward-scope",
+        type=str,
+        default=None,
+        choices=["none", "round_a", "round_b", "both"],
+        help="Enable cross reward using partner traces in selected rounds",
+    )
+    parser.add_argument(
+        "--cross-reward-partner",
+        type=str,
+        default=None,
+        choices=["all", "correct", "best"],
+        help="Partner trace selection for cross reward",
+    )
 
     args = parser.parse_args()
 
@@ -200,6 +214,14 @@ def main():
     if args.trace_acc_apply_to:
         config["rewards"]["trace_acc_apply_to"] = args.trace_acc_apply_to
 
+    # Cross reward config
+    if "collaboration" not in config:
+        config["collaboration"] = {}
+    if args.cross_reward_scope:
+        config["collaboration"]["cross_reward_scope"] = args.cross_reward_scope
+    if args.cross_reward_partner:
+        config["collaboration"]["cross_reward_partner"] = args.cross_reward_partner
+
     # Create experiment name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     algorithm = config["policy_optimization"]["algorithm"]
@@ -234,6 +256,10 @@ def main():
     logger.info(f"Think reward enabled: {args.think_reward}")
     logger.info(f"Log round rewards: {args.log_round_rewards}")
     logger.info(f"Log reward components: {args.log_reward_components}")
+    logger.info(
+        f"Cross reward scope: {config['collaboration'].get('cross_reward_scope', 'none')}, "
+        f"partner: {config['collaboration'].get('cross_reward_partner', 'all')}"
+    )
     logger.info(f"Prompt max length: {config.get('fast_training', {}).get('prompt_max_length', 1024)}")
     logger.info(f"Logprob max length: {config.get('fast_training', {}).get('logprob_max_length', 2048)}")
     logger.info(
