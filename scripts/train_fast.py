@@ -27,16 +27,8 @@ import torch
 import wandb
 from src.trainers import FastCollaborativeTrainer
 from src.data import create_dataloaders
+from src.utils import setup_logging
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("training_fast.log"),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +169,6 @@ def main():
     args = parser.parse_args()
 
     # Load config
-    logger.info(f"Loading config from {args.config}")
     config = load_config(args.config)
 
     # Override config with command line args
@@ -240,12 +231,20 @@ def main():
         output_dir = Path(config["project"]["output_dir"]) / experiment_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Setup logging (train_logs/<experiment_name>)
+    log_root = Path(config.get("project", {}).get("log_dir", "./train_logs"))
+    log_dir = log_root / experiment_name
+    setup_logging(log_dir=str(log_dir), name="")
+
+    logger.info(f"Loading config from {args.config}")
+
     # Save config
     with open(output_dir / "config.yaml", "w") as f:
         yaml.dump(config, f)
 
     logger.info(f"Experiment: {experiment_name}")
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Log directory: {log_dir}")
     logger.info(f"Algorithm: {algorithm}")
     logger.info(f"Dataset: {config['training']['dataset']}")
     logger.info(f"Num samples: {num_samples}")

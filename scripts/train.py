@@ -25,16 +25,8 @@ import torch
 import wandb
 from src.trainers import CollaborativeTrainer
 from src.data import create_dataloaders
+from src.utils import setup_logging
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("training.log"),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -205,8 +197,6 @@ def main():
             {"name": available[m]["name"]} for m in model_names
         ]
 
-    logger.info(f"Models: {[m['name'] for m in model_configs]}")
-
     # Setup output directory
     if args.output_dir:
         output_dir = args.output_dir
@@ -216,7 +206,16 @@ def main():
         output_dir = f"outputs/{exp_name}_{timestamp}"
 
     os.makedirs(output_dir, exist_ok=True)
+
+    # Setup logging (train_logs/<experiment_name>)
+    experiment_name = Path(output_dir).name
+    log_root = Path(config.get("project", {}).get("log_dir", "./train_logs"))
+    log_dir = log_root / experiment_name
+    setup_logging(log_dir=str(log_dir), name="")
+
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Log directory: {log_dir}")
+    logger.info(f"Models: {[m['name'] for m in model_configs]}")
 
     # Save config
     config_save_path = os.path.join(output_dir, "config.yaml")

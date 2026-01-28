@@ -36,9 +36,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using this approach
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -46,9 +46,9 @@ Numerical answer from this approach
 <reasoning>
 Step-by-step solution using the alternative approach
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -73,9 +73,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using the hint
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -83,9 +83,9 @@ Numerical answer from this approach
 <reasoning>
 Step-by-step solution using a different method
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -97,7 +97,11 @@ Question: {question}
 Solve using the hint and an alternative approach:"""
 
     def format_prompt(self, question: str, **kwargs) -> str:
-        return self.TEMPLATE.format(question=question)
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
+        return self.TEMPLATE.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     def format_contexted_prompt(
         self,
@@ -105,9 +109,11 @@ Solve using the hint and an alternative approach:"""
         teacher_context: str,
         **kwargs
     ) -> str:
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
         return self.CONTEXTED_TEMPLATE.format(
             question=question,
-            teacher_context=teacher_context
+            teacher_context=teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
         )
 
     def get_answer_instruction(self) -> str:
@@ -146,9 +152,9 @@ Format your response as:
 Detailed step-by-step solution using this approach.
 Show all algebraic manipulations clearly.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 \\boxed{{your answer}}
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -157,9 +163,9 @@ Show all algebraic manipulations clearly.
 Detailed step-by-step solution using a different method.
 This could use different techniques like substitution, symmetry, or a known theorem.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 \\boxed{{your answer}}
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -186,9 +192,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using the hint's insight.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 \\boxed{{your answer}}
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -196,9 +202,9 @@ Step-by-step solution using the hint's insight.
 <reasoning>
 Step-by-step solution using a different method.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 \\boxed{{your answer}}
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -210,7 +216,11 @@ Problem: {question}
 Solve using the hint and an alternative approach:"""
 
     def format_prompt(self, question: str, **kwargs) -> str:
-        return self.TEMPLATE.format(question=question)
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
+        return self.TEMPLATE.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     def format_contexted_prompt(
         self,
@@ -218,9 +228,11 @@ Solve using the hint and an alternative approach:"""
         teacher_context: str,
         **kwargs
     ) -> str:
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
         return self.CONTEXTED_TEMPLATE.format(
             question=question,
-            teacher_context=teacher_context
+            teacher_context=teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
         )
 
     def get_answer_instruction(self) -> str:
@@ -262,9 +274,9 @@ For AIME, be careful with:
 - Counting overcounts/undercounts
 - Edge cases
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Integer answer (000-999)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -273,9 +285,9 @@ Integer answer (000-999)
 Detailed step-by-step solution using a different method.
 Cross-check your count or calculation.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Integer answer (000-999)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -302,9 +314,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using the hint's insight.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Integer answer (000-999)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -312,9 +324,9 @@ Integer answer (000-999)
 <reasoning>
 Step-by-step solution using a different method.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Integer answer (000-999)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -326,7 +338,11 @@ Problem: {question}
 Solve using the hint and an alternative approach:"""
 
     def format_prompt(self, question: str, **kwargs) -> str:
-        return self.TEMPLATE.format(question=question)
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
+        return self.TEMPLATE.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     def format_contexted_prompt(
         self,
@@ -334,9 +350,11 @@ Solve using the hint and an alternative approach:"""
         teacher_context: str,
         **kwargs
     ) -> str:
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
         return self.CONTEXTED_TEMPLATE.format(
             question=question,
-            teacher_context=teacher_context
+            teacher_context=teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
         )
 
     def get_answer_instruction(self) -> str:

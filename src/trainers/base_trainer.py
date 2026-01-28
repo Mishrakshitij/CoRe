@@ -563,6 +563,7 @@ class BaseCollabTrainer:
 
         # Determine if using multi-strategy
         multi_strategy = use_multi_strategy if use_multi_strategy is not None else self.multi_strategy
+        strategy_outcome_tag = self.prompting_config.get("strategy_outcome_tag", "result")
 
         all_traces = []
 
@@ -571,10 +572,17 @@ class BaseCollabTrainer:
             if multi_strategy:
                 if context:
                     # Multi-strategy with context (rescue)
-                    prompt = format_multi_strategy_contexted_prompt(question, context)
+                    prompt = format_multi_strategy_contexted_prompt(
+                        question,
+                        context,
+                        strategy_outcome_tag=strategy_outcome_tag,
+                    )
                 else:
                     # Multi-strategy cold generation
-                    prompt = format_multi_strategy_prompt(question)
+                    prompt = format_multi_strategy_prompt(
+                        question,
+                        strategy_outcome_tag=strategy_outcome_tag,
+                    )
             else:
                 # Standard prompt
                 if context:
@@ -630,10 +638,18 @@ class BaseCollabTrainer:
             Formatted prompt string
         """
         if self.multi_strategy:
+            strategy_outcome_tag = self.prompting_config.get("strategy_outcome_tag", "result")
             if context:
-                return format_multi_strategy_contexted_prompt(question, context)
+                return format_multi_strategy_contexted_prompt(
+                    question,
+                    context,
+                    strategy_outcome_tag=strategy_outcome_tag,
+                )
             else:
-                return format_multi_strategy_prompt(question)
+                return format_multi_strategy_prompt(
+                    question,
+                    strategy_outcome_tag=strategy_outcome_tag,
+                )
         else:
             if context:
                 return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"

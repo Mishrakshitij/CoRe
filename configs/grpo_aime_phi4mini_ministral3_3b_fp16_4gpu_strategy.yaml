@@ -1,0 +1,188 @@
+# GRPO Training: Phi-4-mini-reasoning + Ministral-3-3B on AIME (4 GPUs)
+# =========================================================================
+# Two reasoning models trained collaboratively (no quantization).
+# M1 (Phi-4-mini-reasoning) on GPUs 0-1, M2 (Ministral-3-3B) on GPUs 2-3
+#
+# Notes:
+# - Use CUDA_VISIBLE_DEVICES=0,2,3,6 so GPU indices map to 0,1,2,3
+# - max_new_tokens=2048, prompt/context budget = 1024
+
+project:
+  name: "phi4mini-ministral3-3b-aime-strategy-4gpu"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./train_logs"
+  cache_dir: "./cache"
+
+models:
+  available:
+    phi4_mini_reasoning:
+      name: "microsoft/Phi-4-mini-reasoning"
+      type: "phi4"
+      size: "3B"
+      generation:
+        temperature: 0.8
+        top_k: 50
+        top_p: 0.95
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+      generation:
+        temperature: 0.7
+        top_p: 0.9
+
+training:
+  dataset: "aime-1983-2025"
+  num_samples: -1
+  train_split: 1.0
+  val_split: 0.0
+  test_split: 0.0
+
+  num_epochs: 1
+  batch_size: 2
+  gradient_accumulation_steps: 8
+
+  model_gpu_mapping:
+    M1: [0, 1]
+    M2: [2, 3]
+
+  use_qlora: false
+  qlora_bits: 4
+  max_memory_per_gpu: "38GB"
+
+  use_lora: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  bf16: true
+  fp16: false
+  max_grad_norm: 1.0
+
+  save_steps: 25
+  eval_steps: 25
+  logging_steps: 5
+
+policy_optimization:
+  algorithm: "grpo"
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+  K: 2
+  K_prime: 1
+  beta: 0.04
+  epsilon: 0.2
+  steps_per_generation: 4
+  num_iterations: 1
+
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+  w_correctness_e1: 1.0
+  w_correctness_e2: 1.0
+
+  exploit_answer_source: "strategy_outcome"
+  correctness_answer_source: "final_answer"
+  strategy_outcome_tag: "strategy_id_outcome"
+  explore_scope: "strategies"
+
+  use_correctness_reward: true
+  use_exact_match_reward: true
+  w_exact_match: 0.1
+  exact_match_case_sensitive: false
+
+  use_format_reward: true
+  w_format: 0.1
+  format_reward_per_strategy: 0.2
+  format_reward_final_answer_bonus: 0.5
+  format_reward_max: 1.0
+
+  use_length_reward: true
+  w_length: 0.05
+  length_min_tokens: 128
+  length_max_tokens: 1024
+
+  alpha: 0.3
+  partial_thresh: 0.5
+  delta: 0.15
+  eta: 0.1
+  r_teach: 0.15
+  use_think_reward: true
+  w_think: 0.1
+  embedding_device: "cuda:3"
+  use_trace_acc_reward: true
+  w_trace_acc: 0.2
+  trace_acc_apply_to: "correct"
+  trace_acc_source: "correctness"
+
+collaboration:
+  num_models: 2
+  p_hint: 1.0
+  max_context_tokens: 1024
+  include_answer_in_context: false
+  use_full_trace_hint: true
+  strip_answer_from_hint: true
+  use_correct_strategy_hint: true
+  truncate_hint_to_fit: true
+  hint_truncation_side: "left"
+  hint_prefix: "A peer model solved this correctly. Use its reasoning as guidance and follow a similar approach."
+  max_buffer_size: 1000
+  enable_distillation: false
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_device: "cuda:3"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+generation:
+  max_new_tokens: 2048
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+prompting:
+  multi_strategy: true
+  template_type: "auto"
+  context_template: "auto"
+  dataset_prompt_source: "template"
+  strategy_outcome_tag: "strategy_id_outcome"
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+counterfactual:
+  enabled: false
+
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 4
+  generate_traces_for_eval: true
+
+fast_training:
+  gen_batch_size: 2
+  prompt_max_length: 1024
+  logprob_max_length: 2048
+  log_round_rewards: true
+  log_round_reward_components: true
+  log_hint_stats: true

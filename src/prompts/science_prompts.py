@@ -44,9 +44,9 @@ Format your response as:
 Detailed step-by-step analysis using this approach.
 Consider relevant scientific principles, equations, or concepts.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -55,9 +55,9 @@ Letter answer (A, B, C, or D)
 Analyze the question using a different scientific perspective or method.
 Verify your answer by checking consistency with known principles.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -84,9 +84,9 @@ Format your response as:
 <reasoning>
 Analysis using the hint's insight and scientific principles.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -94,9 +94,9 @@ Letter answer (A, B, C, or D)
 <reasoning>
 Independent analysis using different scientific reasoning.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -108,7 +108,11 @@ Your final letter answer (A, B, C, or D)
 Solve using the hint and an alternative approach:"""
 
     def format_prompt(self, question: str, **kwargs) -> str:
-        return self.TEMPLATE.format(question=question)
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
+        return self.TEMPLATE.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     def format_contexted_prompt(
         self,
@@ -116,9 +120,11 @@ Solve using the hint and an alternative approach:"""
         teacher_context: str,
         **kwargs
     ) -> str:
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
         return self.CONTEXTED_TEMPLATE.format(
             question=question,
-            teacher_context=teacher_context
+            teacher_context=teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
         )
 
     def get_answer_instruction(self) -> str:
@@ -159,9 +165,9 @@ Format your response as:
 Detailed medical reasoning using this approach.
 Consider relevant pathophysiology, clinical presentations, or mechanisms.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -170,9 +176,9 @@ Letter answer (A, B, C, or D)
 Analyze the question using a different medical perspective.
 Consider differential diagnoses or alternative mechanisms.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -199,9 +205,9 @@ Format your response as:
 <reasoning>
 Analysis using the hint's medical insight.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -209,9 +215,9 @@ Letter answer (A, B, C, or D)
 <reasoning>
 Independent analysis using different medical reasoning.
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Letter answer (A, B, C, or D)
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -223,7 +229,11 @@ Your final letter answer (A, B, C, or D)
 Solve using the hint and an alternative approach:"""
 
     def format_prompt(self, question: str, **kwargs) -> str:
-        return self.TEMPLATE.format(question=question)
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
+        return self.TEMPLATE.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     def format_contexted_prompt(
         self,
@@ -231,9 +241,11 @@ Solve using the hint and an alternative approach:"""
         teacher_context: str,
         **kwargs
     ) -> str:
+        strategy_outcome_tag = kwargs.get("strategy_outcome_tag", "result")
         return self.CONTEXTED_TEMPLATE.format(
             question=question,
-            teacher_context=teacher_context
+            teacher_context=teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
         )
 
     def get_answer_instruction(self) -> str:

@@ -26,7 +26,7 @@ from vllm.lora.request import LoRARequest
 
 from transformers import AutoTokenizer
 
-from src.rewards import CombinedRewardFunction
+from src.rewards import ExploitReward
 from src.data import ReasoningDataset
 from src.prompts import get_prompt_template
 from src.data.preprocessing import (
@@ -53,6 +53,13 @@ class VLLMMultiStrategyEvaluator:
         dataset_name: str = "math",
         tensor_parallel_size: int = 1,
         prompt_template: str = "auto",
+        max_model_len: int = 4096,
+        max_tokens: int = 1024,
+        max_num_seqs: int | None = None,
+        system_prefix: str | None = None,
+        dataset_prompt_source: str = "legacy_xml",
+        strategy_outcome_tag: str = "result",
+        scoring_mode: str = "final_answer",
     ):
         self.model_id = model_id
         self.adapter_path = adapter_path
@@ -60,6 +67,10 @@ class VLLMMultiStrategyEvaluator:
         self.dataset_name = dataset_name
         self.tensor_parallel_size = tensor_parallel_size
         self.base_model = base_model
+        self.system_prefix = system_prefix
+        self.dataset_prompt_source = dataset_prompt_source
+        self.strategy_outcome_tag = strategy_outcome_tag
+        self.scoring_mode = scoring_mode
 
         # Determine prompt template type
         if prompt_template == "auto":
@@ -84,6 +95,11 @@ class VLLMMultiStrategyEvaluator:
         self.prompt_template = get_prompt_template(dataset_name)
         logger.info(f"Using prompt template: {self.template_type}")
         logger.info(f"  Dataset: {dataset_name}")
+        logger.info(f"  Dataset prompt source: {dataset_prompt_source}")
+        logger.info(f"  Strategy outcome tag: {strategy_outcome_tag}")
+        logger.info(f"  Scoring mode: {scoring_mode}")
+        if self.system_prefix:
+            logger.info("  System prefix: enabled")
         if self.template_type == "standard":
             logger.info(f"  Domain: {self.prompt_template.domain}")
             logger.info(f"  Strategies: {self.prompt_template.strategies}")
@@ -95,25 +111,25 @@ class VLLMMultiStrategyEvaluator:
         else:
             logger.info(f"  Mode: BASE ONLY (no adapter)")
 
+        llm_kwargs = {
+            "model": base_model,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "trust_remote_code": True,
+            "max_model_len": max_model_len,
+            "tensor_parallel_size": tensor_parallel_size,
+        }
+        if max_num_seqs is not None:
+            llm_kwargs["max_num_seqs"] = max_num_seqs
+
         # Initialize vLLM
         if base_only:
-            self.llm = LLM(
-                model=base_model,
-                gpu_memory_utilization=gpu_memory_utilization,
-                trust_remote_code=True,
-                max_model_len=4096,  # Longer for multi-strategy responses
-                tensor_parallel_size=tensor_parallel_size,
-            )
+            self.llm = LLM(**llm_kwargs)
             self.lora_request = None
         else:
             self.llm = LLM(
-                model=base_model,
                 enable_lora=True,
                 max_lora_rank=64,
-                gpu_memory_utilization=gpu_memory_utilization,
-                trust_remote_code=True,
-                max_model_len=4096,
-                tensor_parallel_size=tensor_parallel_size,
+                **llm_kwargs,
             )
             self.lora_request = LoRARequest(
                 lora_name=model_id,
@@ -121,14 +137,21 @@ class VLLMMultiStrategyEvaluator:
                 lora_path=adapter_path,
             )
 
-        # Reward function for answer extraction
-        self.reward_fn = CombinedRewardFunction({})
+        # Scoring function for answer extraction
+        scoring_config = {
+            "exploit_answer_source": "strategy_outcome"
+            if scoring_mode == "strategy_outcome"
+            else "final_answer",
+            "strategy_outcome_tag": strategy_outcome_tag,
+            "alpha": 0.0,
+        }
+        self.scoring_reward_fn = ExploitReward(scoring_config)
 
         # Sampling params - longer max_tokens for multi-strategy
         self.sampling_params = SamplingParams(
             temperature=0.7,
             top_p=0.9,
-            max_tokens=1024,  # Longer for detailed reasoning
+            max_tokens=max_tokens,  # Longer for detailed reasoning
         )
 
     def _format_prompt(self, question: str) -> str:
@@ -139,6 +162,9 @@ class VLLMMultiStrategyEvaluator:
                 tokenizer=self.tokenizer,
                 dataset=self.dataset_name,
                 multi_strategy=True,
+                system_prefix=self.system_prefix,
+                dataset_prompt_source=self.dataset_prompt_source,
+                strategy_outcome_tag=self.strategy_outcome_tag,
             )
         elif self.template_type == "phi-chat" and self.tokenizer:
             return format_phi4_prompt(
@@ -146,10 +172,19 @@ class VLLMMultiStrategyEvaluator:
                 tokenizer=self.tokenizer,
                 dataset=self.dataset_name,
                 multi_strategy=True,
+                system_prefix=self.system_prefix,
+                dataset_prompt_source=self.dataset_prompt_source,
+                strategy_outcome_tag=self.strategy_outcome_tag,
             )
         else:
             # Standard: use domain-specific prompt template
-            return self.prompt_template.format_prompt(question)
+            prompt = self.prompt_template.format_prompt(
+                question,
+                strategy_outcome_tag=self.strategy_outcome_tag,
+            )
+            if self.system_prefix:
+                prompt = f"{self.system_prefix}\n\n{prompt}"
+            return prompt
 
     def generate_batch(
         self,
@@ -219,8 +254,8 @@ class VLLMMultiStrategyEvaluator:
                 best_trace = None
 
                 for trace in traces:
-                    exploit_result = self.reward_fn.exploit_reward(trace, gt, question)
-                    if exploit_result.is_correct:
+                    score_result = self.scoring_reward_fn(trace, gt, question)
+                    if score_result.is_correct:
                         is_correct = True
                         best_trace = trace
                         break
@@ -248,6 +283,7 @@ class VLLMMultiStrategyEvaluator:
             "accuracy": correct_count / total if total > 0 else 0,
             "prompt_type": "multi_strategy",
             "dataset": self.dataset_name,
+            "scoring_mode": self.scoring_mode,
         }
 
         return {"metrics": metrics, "results": all_results}
@@ -261,6 +297,8 @@ def main():
                         help="Which model to evaluate (M1 or M2)")
     parser.add_argument("--base-only", action="store_true",
                         help="Evaluate base model without LoRA adapter")
+    parser.add_argument("--base-model", type=str, default=None,
+                        help="Override base model when using --base-only")
     parser.add_argument("--dataset", type=str, default="math",
                         help="Dataset name (gsm8k, math, aime, gpqa, medmcqa)")
     parser.add_argument("--split", type=str, default="test")
@@ -275,6 +313,22 @@ def main():
     parser.add_argument("--prompt-template", type=str, default="auto",
                         choices=["auto", "standard", "mistral-chat", "phi-chat"],
                         help="Prompt template type (auto detects from model)")
+    parser.add_argument("--max-model-len", type=int, default=4096,
+                        help="Max model length for vLLM context")
+    parser.add_argument("--max-tokens", type=int, default=1024,
+                        help="Max new tokens to generate")
+    parser.add_argument("--max-num-seqs", type=int, default=None,
+                        help="Limit vLLM scheduler concurrency (default: vLLM auto)")
+    parser.add_argument("--system-prefix", type=str, default=None,
+                        help="Extra system message text appended to the base system prompt")
+    parser.add_argument("--dataset-prompt-source", type=str, default="legacy_xml",
+                        choices=["legacy_xml", "template"],
+                        help="Prompt source for chat templates (legacy_xml or template)")
+    parser.add_argument("--strategy-outcome-tag", type=str, default="result",
+                        help="XML tag used for per-strategy outcomes (default: result)")
+    parser.add_argument("--scoring-mode", type=str, default="final_answer",
+                        choices=["final_answer", "strategy_outcome"],
+                        help="Which answer source to score (final_answer or strategy_outcome)")
 
     args = parser.parse_args()
 
@@ -285,7 +339,7 @@ def main():
     }
 
     if args.base_only:
-        base_model = BASE_MODELS[args.model]
+        base_model = args.base_model or BASE_MODELS[args.model]
         adapter_path = None
         model_id = f"{args.model}_base"
         logger.info(f"Evaluating BASE model {args.model}: {base_model}")
@@ -318,6 +372,13 @@ def main():
         dataset_name=args.dataset,
         tensor_parallel_size=args.tensor_parallel,
         prompt_template=args.prompt_template,
+        max_model_len=args.max_model_len,
+        max_tokens=args.max_tokens,
+        max_num_seqs=args.max_num_seqs,
+        system_prefix=args.system_prefix,
+        dataset_prompt_source=args.dataset_prompt_source,
+        strategy_outcome_tag=args.strategy_outcome_tag,
+        scoring_mode=args.scoring_mode,
     )
 
     # Load dataset

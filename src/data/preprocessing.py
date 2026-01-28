@@ -285,9 +285,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using this approach
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -295,9 +295,9 @@ Numerical answer from this approach
 <reasoning>
 Step-by-step solution using the alternative approach
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -309,7 +309,11 @@ Question: {question}
 Solve using at least 2 different approaches:"""
 
 
-def format_multi_strategy_prompt(question: str, dataset: str = "gsm8k") -> str:
+def format_multi_strategy_prompt(
+    question: str,
+    dataset: str = "gsm8k",
+    strategy_outcome_tag: str = "result",
+) -> str:
     """
     Format a question using multi-strategy exploration prompt.
 
@@ -324,22 +328,32 @@ def format_multi_strategy_prompt(question: str, dataset: str = "gsm8k") -> str:
     # For backward compatibility, use inline GSM8K template if no dataset specified
     # or if prompts module not available
     if dataset.lower() == "gsm8k":
-        return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
+        return GSM8K_MULTI_STRATEGY_PROMPT.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
     # Use domain-specific prompts from prompts module
     try:
         from src.prompts import get_prompt_template
         template = get_prompt_template(dataset)
-        return template.format_prompt(question)
+        return template.format_prompt(
+            question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
     except (ImportError, ValueError):
         # Fallback to GSM8K if prompts module unavailable
-        return GSM8K_MULTI_STRATEGY_PROMPT.format(question=question)
+        return GSM8K_MULTI_STRATEGY_PROMPT.format(
+            question=question,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
 
 def format_multi_strategy_contexted_prompt(
     question: str,
     teacher_context: str,
-    dataset: str = "gsm8k"
+    dataset: str = "gsm8k",
+    strategy_outcome_tag: str = "result",
 ) -> str:
     """
     Format a contexted prompt with multi-strategy format and teacher hint.
@@ -369,9 +383,9 @@ Format your response as:
 <reasoning>
 Step-by-step solution using the hint
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <strategy id="2">
@@ -379,9 +393,9 @@ Numerical answer from this approach
 <reasoning>
 Step-by-step solution using a different method
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Numerical answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>
 
 <final_answer>
@@ -396,13 +410,25 @@ Solve using the hint and an alternative approach:"""
     try:
         from src.prompts import get_prompt_template
         template = get_prompt_template(dataset)
-        return template.format_contexted_prompt(question, teacher_context)
+        return template.format_contexted_prompt(
+            question,
+            teacher_context,
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
     except (ImportError, ValueError):
         # Fallback to GSM8K format
-        return format_multi_strategy_contexted_prompt(question, teacher_context, "gsm8k")
+        return format_multi_strategy_contexted_prompt(
+            question,
+            teacher_context,
+            "gsm8k",
+            strategy_outcome_tag=strategy_outcome_tag,
+        )
 
 
-def extract_xml_answer(text: str) -> Optional[str]:
+def extract_xml_answer(
+    text: str,
+    strategy_outcome_tag: str = "result",
+) -> Optional[str]:
     """
     Extract final answer from XML-formatted multi-strategy response.
 
@@ -423,7 +449,7 @@ def extract_xml_answer(text: str) -> Optional[str]:
         return answer
 
     # Fallback: try to get from last <result> tag
-    results = re.findall(r'<result>\s*(.*?)\s*</result>', text, re.DOTALL)
+    results = extract_strategy_outcomes(text, strategy_outcome_tag)
     if results:
         answer = results[-1].strip()
         numbers = re.findall(r'-?\d+\.?\d*', answer)
@@ -435,7 +461,34 @@ def extract_xml_answer(text: str) -> Optional[str]:
     return extract_answer(text)
 
 
-def extract_strategy_blocks(text: str) -> List[Dict]:
+def extract_strategy_outcomes(
+    text: str,
+    outcome_tag: str = "result",
+) -> List[str]:
+    """
+    Extract all strategy outcomes from a multi-strategy response.
+
+    Args:
+        text: Model response text
+        outcome_tag: XML tag for strategy outcomes (default: "result")
+
+    Returns:
+        List of outcome strings
+    """
+    if not text:
+        return []
+
+    pattern = fr'<{re.escape(outcome_tag)}>\s*(.*?)\s*</{re.escape(outcome_tag)}>'
+    outcomes = re.findall(pattern, text, re.DOTALL)
+    if not outcomes and outcome_tag != "result":
+        outcomes = re.findall(r'<result>\s*(.*?)\s*</result>', text, re.DOTALL)
+    return [o.strip() for o in outcomes]
+
+
+def extract_strategy_blocks(
+    text: str,
+    outcome_tag: str = "result",
+) -> List[Dict]:
     """
     Extract all strategy blocks from multi-strategy response.
 
@@ -448,13 +501,24 @@ def extract_strategy_blocks(text: str) -> List[Dict]:
     strategies = []
 
     # Find all strategy blocks
-    pattern = r'<strategy\s+id="(\d+)">\s*' \
-              r'<approach>(.*?)</approach>\s*' \
-              r'<reasoning>(.*?)</reasoning>\s*' \
-              r'<result>\s*(.*?)\s*</result>\s*' \
-              r'</strategy>'
+    pattern = (
+        r'<strategy\s+id="(\d+)">\s*'
+        r'<approach>(.*?)</approach>\s*'
+        r'<reasoning>(.*?)</reasoning>\s*'
+        rf'<{re.escape(outcome_tag)}>\s*(.*?)\s*</{re.escape(outcome_tag)}>\s*'
+        r'</strategy>'
+    )
 
     matches = re.findall(pattern, text, re.DOTALL)
+    if not matches and outcome_tag != "result":
+        fallback_pattern = (
+            r'<strategy\s+id="(\d+)">\s*'
+            r'<approach>(.*?)</approach>\s*'
+            r'<reasoning>(.*?)</reasoning>\s*'
+            r'<result>\s*(.*?)\s*</result>\s*'
+            r'</strategy>'
+        )
+        matches = re.findall(fallback_pattern, text, re.DOTALL)
 
     for match in matches:
         strategy_id, approach, reasoning, result = match
@@ -571,6 +635,9 @@ def format_mistral3_prompt(
     tokenizer,
     dataset: str = "gpqa",
     multi_strategy: bool = True,
+    system_prefix: str | None = None,
+    dataset_prompt_source: str = "legacy_xml",
+    strategy_outcome_tag: str = "result",
 ) -> str:
     """
     Format prompt for Mistral-3 reasoning models using chat template.
@@ -653,14 +720,30 @@ Think through the problem step by step. Consider:
 
 Think through the problem step by step. Show your reasoning clearly."""
 
+    if system_prefix:
+        system_message = f"{system_message}\n\n{system_prefix}"
+
     # Build user message with question and optional XML format
     if multi_strategy:
-        # Auto-select XML format based on dataset type
-        if is_numeric_dataset:
-            xml_format = AIME_MISTRAL_XML_FORMAT
+        if dataset_prompt_source == "template":
+            user_message = format_multi_strategy_prompt(
+                question,
+                dataset=dataset,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
         else:
-            xml_format = GPQA_MISTRAL_XML_FORMAT
-        user_message = f"""{question}
+            # Auto-select XML format based on dataset type
+            if is_numeric_dataset:
+                xml_format = AIME_MISTRAL_XML_FORMAT
+            else:
+                xml_format = GPQA_MISTRAL_XML_FORMAT
+            if strategy_outcome_tag != "result":
+                xml_format = (
+                    xml_format
+                    .replace("<result>", f"<{strategy_outcome_tag}>")
+                    .replace("</result>", f"</{strategy_outcome_tag}>")
+                )
+            user_message = f"""{question}
 
 {xml_format}"""
     else:
@@ -712,6 +795,9 @@ def format_phi4_prompt(
     tokenizer,
     dataset: str = "gpqa",
     multi_strategy: bool = True,
+    system_prefix: str | None = None,
+    dataset_prompt_source: str = "legacy_xml",
+    strategy_outcome_tag: str = "result",
 ) -> str:
     """
     Format prompt for Phi-4 reasoning models using ChatML template.
@@ -808,14 +894,30 @@ In the Solution section, provide the final answer.
 
 Format your final answer as: <final_answer>ANSWER</final_answer>"""
 
+    if system_prefix:
+        system_message = f"{system_message}\n\n{system_prefix}"
+
     # Build user message with question and optional XML format
     if multi_strategy:
-        # Auto-select XML format based on dataset type
-        if is_numeric_dataset:
-            xml_format = PHI4_AIME_XML_FORMAT
+        if dataset_prompt_source == "template":
+            user_message = format_multi_strategy_prompt(
+                question,
+                dataset=dataset,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
         else:
-            xml_format = PHI4_GPQA_XML_FORMAT
-        user_message = f"""{question}
+            # Auto-select XML format based on dataset type
+            if is_numeric_dataset:
+                xml_format = PHI4_AIME_XML_FORMAT
+            else:
+                xml_format = PHI4_GPQA_XML_FORMAT
+            if strategy_outcome_tag != "result":
+                xml_format = (
+                    xml_format
+                    .replace("<result>", f"<{strategy_outcome_tag}>")
+                    .replace("</result>", f"</{strategy_outcome_tag}>")
+                )
+            user_message = f"""{question}
 
 {xml_format}"""
     else:

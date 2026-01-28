@@ -147,6 +147,8 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         use_full_trace_hint: bool,
         dataset: str,
         multi_strategy: bool,
+        dataset_prompt_source: str,
+        strategy_outcome_tag: str,
     ) -> str:
         """Build a contexted prompt string for Round B generation."""
         tokenizer = self.tokenizers[model_id]
@@ -173,6 +175,8 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                     tokenizer=tokenizer,
                     dataset=dataset,
                     multi_strategy=multi_strategy,
+                    dataset_prompt_source=dataset_prompt_source,
+                    strategy_outcome_tag=strategy_outcome_tag,
                 )
             if effective_context_template == "mistral-chat" and is_mistral3_model(model_name):
                 return format_mistral3_prompt(
@@ -180,16 +184,28 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                     tokenizer=tokenizer,
                     dataset=dataset,
                     multi_strategy=multi_strategy,
+                    dataset_prompt_source=dataset_prompt_source,
+                    strategy_outcome_tag=strategy_outcome_tag,
                 )
             return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
 
         if effective_hint_prefix is None and use_full_trace_hint:
             effective_hint_prefix = "Use the following reasoning trace as guidance."
         if effective_hint_prefix:
-            return (
-                f"{effective_hint_prefix}\n\n{context}\n\n"
-                f"Question: {question}\n\nLet's solve this step by step:"
+            contexted_question = (
+                f"{effective_hint_prefix}\n\n<peer_hint>\n{context}\n</peer_hint>\n\n"
+                f"{question}"
             )
+        else:
+            contexted_question = f"<peer_hint>\n{context}\n</peer_hint>\n\n{question}"
+
+        if multi_strategy:
+            return format_multi_strategy_prompt(
+                contexted_question,
+                dataset=dataset,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
+
         return f"{context}\n\nQuestion: {question}\n\nLet's solve this step by step:"
 
     def _get_cross_reward_settings(self) -> Tuple[str, str]:
@@ -320,6 +336,14 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
         model_name = self.model_configs_dict.get(model_id, {}).get("name", "")
         template_type = self.config.get("prompting", {}).get("template_type", "standard")
         multi_strategy = self.config.get("prompting", {}).get("multi_strategy", False)
+        dataset_prompt_source = self.config.get("prompting", {}).get(
+            "dataset_prompt_source",
+            "legacy_xml",
+        )
+        strategy_outcome_tag = self.config.get("prompting", {}).get(
+            "strategy_outcome_tag",
+            "result",
+        )
         dataset = self.config.get("training", {}).get("dataset", "gsm8k")
         context_template = self.config.get("prompting", {}).get("context_template", "standard")
         use_full_trace_hint = self.config.get("collaboration", {}).get("use_full_trace_hint", False)
@@ -364,6 +388,8 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 use_full_trace_hint=use_full_trace_hint,
                 dataset=dataset,
                 multi_strategy=multi_strategy,
+                dataset_prompt_source=dataset_prompt_source,
+                strategy_outcome_tag=strategy_outcome_tag,
             )
 
             if truncate_hint_to_fit and self.prompt_max_length:
@@ -405,6 +431,8 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                         use_full_trace_hint=use_full_trace_hint,
                         dataset=dataset,
                         multi_strategy=multi_strategy,
+                        dataset_prompt_source=dataset_prompt_source,
+                        strategy_outcome_tag=strategy_outcome_tag,
                     )
                     if log_hint_stats:
                         logger.info(
@@ -431,6 +459,8 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 tokenizer=tokenizer,
                 dataset=dataset,
                 multi_strategy=multi_strategy,
+                dataset_prompt_source=dataset_prompt_source,
+                strategy_outcome_tag=strategy_outcome_tag,
             )
 
         # Check if we should use Mistral chat template
@@ -440,11 +470,17 @@ class FastCollaborativeTrainer(BaseCollabTrainer):
                 tokenizer=tokenizer,
                 dataset=dataset,
                 multi_strategy=multi_strategy,
+                dataset_prompt_source=dataset_prompt_source,
+                strategy_outcome_tag=strategy_outcome_tag,
             )
 
         # Standard prompt formatting
         if multi_strategy:
-            return format_multi_strategy_prompt(question, dataset=dataset)
+            return format_multi_strategy_prompt(
+                question,
+                dataset=dataset,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
         else:
             return format_prompt(question)
 

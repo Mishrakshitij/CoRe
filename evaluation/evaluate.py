@@ -33,6 +33,21 @@ import yaml
 
 from src.rewards import CombinedRewardFunction
 from src.data import create_dataloaders, ReasoningDataset
+from src.data.preprocessing import (
+    format_prompt,
+    format_multi_strategy_prompt,
+    format_mistral3_prompt,
+    format_phi4_prompt,
+    is_mistral3_model,
+    is_phi4_model,
+)
+
+# Mistral-3 models require transformers>=5.0.0 and use special model classes
+try:
+    from transformers import Mistral3ForConditionalGeneration
+    MISTRAL3_AVAILABLE = True
+except ImportError:
+    MISTRAL3_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,13 +60,29 @@ class CollaborativeEvaluator:
         self,
         config: dict,
         checkpoint_dir: str,
+        dataset_name: str,
+        prompt_template: str,
+        prompt_style: str,
+        prompt_max_length: int,
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
     ):
         self.config = config
         self.checkpoint_dir = Path(checkpoint_dir)
+        self.dataset_name = dataset_name
+        self.prompt_template = prompt_template
+        self.prompt_style = prompt_style
+        self.prompt_max_length = prompt_max_length
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.prompting_config = config.get("prompting", {})
 
         # Load models
         self.models = {}
         self.tokenizers = {}
+        self.model_names = {}
         self._load_models()
 
         # Reward function for metrics
@@ -85,30 +116,99 @@ class CollaborativeEvaluator:
                 logger.info(f"  Loading as LoRA adapter...")
 
                 # Load tokenizer from adapter dir (has chat template)
-                tokenizer = AutoTokenizer.from_pretrained(model_dir)
-
-                # Load base model
-                base_model = AutoModelForCausalLM.from_pretrained(
-                    base_model_name,
-                    torch_dtype=torch.bfloat16,
-                    device_map="auto",
+                tokenizer = AutoTokenizer.from_pretrained(
+                    model_dir,
+                    trust_remote_code=is_mistral3_model(base_model_name),
                 )
+
+                # Load base model (handle Mistral-3 explicitly)
+                base_model = self._load_base_model(base_model_name)
 
                 # Load LoRA adapter
                 model = PeftModel.from_pretrained(base_model, model_dir)
                 model.eval()
+                self.model_names[model_id] = base_model_name
             else:
                 # Full model checkpoint
                 tokenizer = AutoTokenizer.from_pretrained(model_dir)
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_dir,
-                    torch_dtype=torch.bfloat16,
-                    device_map="auto",
-                )
+                model = self._load_base_model(str(model_dir))
                 model.eval()
+                self.model_names[model_id] = str(model_dir)
 
             self.models[model_id] = model
             self.tokenizers[model_id] = tokenizer
+
+    def _load_base_model(self, model_name_or_path: str):
+        """Load a base model with Mistral-3 compatibility."""
+        load_kwargs = {
+            "torch_dtype": torch.bfloat16,
+            "device_map": "auto",
+        }
+
+        if is_mistral3_model(model_name_or_path) and MISTRAL3_AVAILABLE:
+            load_kwargs["trust_remote_code"] = True
+            return Mistral3ForConditionalGeneration.from_pretrained(
+                model_name_or_path,
+                **load_kwargs,
+            )
+
+        try:
+            return AutoModelForCausalLM.from_pretrained(
+                model_name_or_path,
+                **load_kwargs,
+            )
+        except ValueError as exc:
+            if "Mistral3Config" in str(exc) and MISTRAL3_AVAILABLE:
+                load_kwargs["trust_remote_code"] = True
+                return Mistral3ForConditionalGeneration.from_pretrained(
+                    model_name_or_path,
+                    **load_kwargs,
+                )
+            raise
+
+    def _resolve_template(self, model_name: str) -> str:
+        if self.prompt_template != "auto":
+            return self.prompt_template
+        if is_mistral3_model(model_name):
+            return "mistral-chat"
+        if is_phi4_model(model_name):
+            return "phi-chat"
+        return "standard"
+
+    def _format_prompt(self, model_id: str, question: str) -> str:
+        model_name = self.model_names.get(model_id, "")
+        template_type = self._resolve_template(model_name)
+        tokenizer = self.tokenizers[model_id]
+        multi_strategy = self.prompt_style == "multi-strategy"
+        strategy_outcome_tag = self.prompting_config.get("strategy_outcome_tag", "result")
+        dataset_prompt_source = self.prompting_config.get("dataset_prompt_source", "legacy_xml")
+
+        if template_type == "mistral-chat" and is_mistral3_model(model_name):
+            return format_mistral3_prompt(
+                question=question,
+                tokenizer=tokenizer,
+                dataset=self.dataset_name,
+                multi_strategy=multi_strategy,
+                dataset_prompt_source=dataset_prompt_source,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
+        if template_type == "phi-chat" and is_phi4_model(model_name):
+            return format_phi4_prompt(
+                question=question,
+                tokenizer=tokenizer,
+                dataset=self.dataset_name,
+                multi_strategy=multi_strategy,
+                dataset_prompt_source=dataset_prompt_source,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
+
+        if multi_strategy:
+            return format_multi_strategy_prompt(
+                question,
+                dataset=self.dataset_name,
+                strategy_outcome_tag=strategy_outcome_tag,
+            )
+        return format_prompt(question)
 
     @torch.no_grad()
     def generate(
@@ -121,23 +221,23 @@ class CollaborativeEvaluator:
         model = self.models[model_id]
         tokenizer = self.tokenizers[model_id]
 
-        prompt = f"Question: {question}\n\nLet's solve this step by step:"
+        prompt = self._format_prompt(model_id, question)
 
         inputs = tokenizer(
             prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=1024,
+            max_length=self.prompt_max_length,
         ).to(model.device)
 
         traces = []
         for _ in range(num_traces):
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=512,
-                temperature=0.7,
-                top_p=0.9,
+                max_new_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
                 do_sample=True,
                 pad_token_id=tokenizer.pad_token_id,
             )
@@ -177,9 +277,14 @@ class CollaborativeEvaluator:
             model_traces = []
 
             for trace in traces:
-                exploit_result = self.reward_fn.exploit_reward(
-                    trace, ground_truth, question
-                )
+                if self.reward_fn.correctness_reward_fn is not None:
+                    exploit_result = self.reward_fn.correctness_reward_fn(
+                        trace, ground_truth, question
+                    )
+                else:
+                    exploit_result = self.reward_fn.exploit_reward(
+                        trace, ground_truth, question
+                    )
                 model_traces.append({
                     "trace": trace[:500],  # Truncate for storage
                     "is_correct": exploit_result.is_correct,
@@ -336,6 +441,44 @@ def main():
         default=4,
         help="Number of traces per model per question",
     )
+    parser.add_argument(
+        "--prompt-template",
+        type=str,
+        default=None,
+        choices=["auto", "standard", "mistral-chat", "phi-chat"],
+        help="Prompt template type (default: from config or auto)",
+    )
+    parser.add_argument(
+        "--prompt-style",
+        type=str,
+        default=None,
+        choices=["direct", "multi-strategy"],
+        help="Prompt style: direct or multi-strategy",
+    )
+    parser.add_argument(
+        "--prompt-max-length",
+        type=int,
+        default=None,
+        help="Max input prompt length",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="Max new tokens to generate",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Sampling temperature",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="Top-p sampling",
+    )
 
     args = parser.parse_args()
 
@@ -347,8 +490,42 @@ def main():
     else:
         config = {}
 
+    prompt_template = args.prompt_template
+    if prompt_template is None:
+        prompt_template = config.get("prompting", {}).get("template_type", "auto")
+
+    prompt_style = args.prompt_style
+    if prompt_style is None:
+        prompt_style = "multi-strategy" if config.get("prompting", {}).get("multi_strategy", False) else "direct"
+
+    prompt_max_length = args.prompt_max_length
+    if prompt_max_length is None:
+        prompt_max_length = config.get("fast_training", {}).get("prompt_max_length", 1024)
+
+    max_new_tokens = args.max_new_tokens
+    if max_new_tokens is None:
+        max_new_tokens = config.get("generation", {}).get("max_new_tokens", 512)
+
+    temperature = args.temperature
+    if temperature is None:
+        temperature = config.get("generation", {}).get("temperature", 0.7)
+
+    top_p = args.top_p
+    if top_p is None:
+        top_p = config.get("generation", {}).get("top_p", 0.9)
+
     # Initialize evaluator
-    evaluator = CollaborativeEvaluator(config, args.checkpoint)
+    evaluator = CollaborativeEvaluator(
+        config,
+        args.checkpoint,
+        dataset_name=args.dataset,
+        prompt_template=prompt_template,
+        prompt_style=prompt_style,
+        prompt_max_length=prompt_max_length,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )
 
     # Load dataset
     logger.info(f"Loading {args.dataset} {args.split} split...")

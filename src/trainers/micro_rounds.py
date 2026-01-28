@@ -111,6 +111,7 @@ class MicroRoundManager:
         # Multi-strategy prompting
         prompting_config = config.get("prompting", {})
         self.multi_strategy = prompting_config.get("multi_strategy", False)
+        self.strategy_outcome_tag = prompting_config.get("strategy_outcome_tag", "result")
 
     def compress_trace(
         self,
@@ -171,6 +172,10 @@ class MicroRoundManager:
                 entry["consistency"] = res.consistency_reward
             if hasattr(res, "format_reward"):
                 entry["format"] = res.format_reward
+            if hasattr(res, "exact_match_reward"):
+                entry["exact_match"] = res.exact_match_reward
+            if hasattr(res, "length_reward"):
+                entry["length_reward"] = res.length_reward
             if hasattr(res, "metadata") and isinstance(res.metadata, dict):
                 if "trace_acc" in res.metadata:
                     entry["trace_acc"] = res.metadata["trace_acc"]
@@ -301,6 +306,7 @@ class MicroRoundManager:
         cleaned = re.sub(r'(?im)^\s*####\s*.*$', '', cleaned)
         cleaned = re.sub(r'(?is)<final_answer>.*?</final_answer>', '', cleaned)
         cleaned = re.sub(r'(?is)<result>.*?</result>', '', cleaned)
+        cleaned = re.sub(r'(?is)<strategy_id_outcome>.*?</strategy_id_outcome>', '', cleaned)
         lines = [line for line in cleaned.splitlines() if line.strip()]
         return "\n".join(lines)
 
@@ -319,7 +325,11 @@ class MicroRoundManager:
         Uses multi-strategy format if enabled.
         """
         if self.multi_strategy:
-            return format_multi_strategy_contexted_prompt(question, teacher_context)
+            return format_multi_strategy_contexted_prompt(
+                question,
+                teacher_context,
+                strategy_outcome_tag=self.strategy_outcome_tag,
+            )
         else:
             prefix = self.hint_prefix or "Here's a helpful reasoning approach:"
             return f"""{prefix}
@@ -337,7 +347,10 @@ Let's solve this step by step:"""
         Uses multi-strategy format if enabled.
         """
         if self.multi_strategy:
-            return format_multi_strategy_prompt(question)
+            return format_multi_strategy_prompt(
+                question,
+                strategy_outcome_tag=self.strategy_outcome_tag,
+            )
         else:
             return format_prompt(question)
 

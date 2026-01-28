@@ -75,8 +75,16 @@ def extract_xml_final_answer(response: str) -> Optional[str]:
 
 
 def extract_strategy_results(response: str) -> List[str]:
-    """Extract all strategy results from response."""
-    results = re.findall(r'<result>\s*(.*?)\s*</result>', response, re.DOTALL)
+    """Extract all strategy outcomes from response."""
+    if not response:
+        return []
+    results = re.findall(
+        r'<strategy_id_outcome>\s*(.*?)\s*</strategy_id_outcome>',
+        response,
+        re.DOTALL,
+    )
+    if not results:
+        results = re.findall(r'<result>\s*(.*?)\s*</result>', response, re.DOTALL)
     return [r.strip() for r in results]
 
 
@@ -271,7 +279,7 @@ class MultiStrategyReward:
             r'<strategy\s+id="\d+">\s*'
             r'<approach>.*?</approach>\s*'
             r'<reasoning>.*?</reasoning>\s*'
-            r'<result>.*?</result>\s*'
+            r'<(?:result|strategy_id_outcome)>.*?</(?:result|strategy_id_outcome)>\s*'
             r'</strategy>',
             re.DOTALL
         )

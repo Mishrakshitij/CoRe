@@ -72,7 +72,11 @@ class BasePromptTemplate(ABC):
         """
         pass
 
-    def get_strategy_block(self, strategy_id: int = 1) -> str:
+    def get_strategy_block(
+        self,
+        strategy_id: int = 1,
+        strategy_outcome_tag: str = "result",
+    ) -> str:
         """
         Get the XML template for a single strategy block.
 
@@ -87,9 +91,9 @@ class BasePromptTemplate(ABC):
 <reasoning>
 Step-by-step solution using this approach
 </reasoning>
-<result>
+<{strategy_outcome_tag}>
 Answer from this approach
-</result>
+</{strategy_outcome_tag}>
 </strategy>"""
 
     def get_final_answer_block(self) -> str:
