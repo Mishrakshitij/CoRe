@@ -27,7 +27,7 @@ import torch
 import wandb
 from src.trainers import FastCollaborativeTrainer
 from src.data import create_dataloaders
-from src.utils import setup_logging
+from src.utils import setup_logging, apply_profile
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,12 @@ def main():
         type=str,
         default=None,
         help="Override dataset from config",
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="Config profile to apply (overrides config 'profile')",
     )
     parser.add_argument(
         "--num-samples",
@@ -170,6 +176,7 @@ def main():
 
     # Load config
     config = load_config(args.config)
+    config = apply_profile(config, args.profile)
 
     # Override config with command line args
     if args.algorithm:
@@ -245,6 +252,8 @@ def main():
     logger.info(f"Experiment: {experiment_name}")
     logger.info(f"Output directory: {output_dir}")
     logger.info(f"Log directory: {log_dir}")
+    if config.get("profile"):
+        logger.info(f"Profile: {config['profile']}")
     logger.info(f"Algorithm: {algorithm}")
     logger.info(f"Dataset: {config['training']['dataset']}")
     logger.info(f"Num samples: {num_samples}")
@@ -272,14 +281,23 @@ def main():
         config["use_wandb"] = True
         setup_wandb(config, experiment_name)
 
-    # Get model configs - use first two models from available
-    available_models = list(config["models"]["available"].keys())
-    if len(available_models) < 2:
-        raise ValueError(f"Need at least 2 models in config, found: {available_models}")
-    model_configs = [
-        config["models"]["available"][available_models[0]],
-        config["models"]["available"][available_models[1]],
-    ]
+    # Get model configs - use active list if provided, else first two available
+    active_models = config.get("models", {}).get("active")
+    if isinstance(active_models, str):
+        active_models = [active_models]
+    if active_models:
+        missing = [mid for mid in active_models if mid not in config["models"]["available"]]
+        if missing:
+            raise ValueError(f"Unknown model id(s) in models.active: {missing}")
+        model_configs = [config["models"]["available"][mid] for mid in active_models]
+    else:
+        available_models = list(config["models"]["available"].keys())
+        if len(available_models) < 2:
+            raise ValueError(f"Need at least 2 models in config, found: {available_models}")
+        model_configs = [
+            config["models"]["available"][available_models[0]],
+            config["models"]["available"][available_models[1]],
+        ]
 
     logger.info(f"Models:")
     for i, mc in enumerate(model_configs):
