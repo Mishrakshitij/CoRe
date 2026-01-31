@@ -7,7 +7,7 @@ Loading, merging, and saving configuration files.
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
 import copy
 
 
@@ -59,6 +59,32 @@ def merge_configs(
             result[key] = copy.deepcopy(value)
 
     return result
+
+
+def apply_profile(
+    config: Dict[str, Any],
+    profile_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Apply a named profile from the config, if present.
+
+    Args:
+        config: Base configuration
+        profile_name: Profile to apply (overrides config["profile"] if provided)
+
+    Returns:
+        Merged configuration
+    """
+    profiles = config.get("profiles", {})
+    selected = profile_name or config.get("profile") or config.get("active_profile")
+    if not selected:
+        return config
+    if selected not in profiles:
+        available = ", ".join(sorted(profiles.keys()))
+        raise ValueError(f"Unknown profile '{selected}'. Available: {available}")
+    merged = merge_configs(config, profiles[selected])
+    merged["profile"] = selected
+    return merged
 
 
 def save_config(config: Dict[str, Any], path: Union[str, Path]):

@@ -25,16 +25,8 @@ import torch
 import wandb
 from src.trainers import CollaborativeTrainer
 from src.data import create_dataloaders
+from src.utils import setup_logging, apply_profile
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("training.log"),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +85,12 @@ def main():
         help="Path to experiment-specific configuration",
     )
     parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="Config profile to apply (overrides config 'profile')",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         default=None,
@@ -107,8 +105,19 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="gsm8k",
-        choices=["gsm8k", "math", "combined"],
+        default=None,
+        choices=[
+            "gsm8k",
+            "math",
+            "math_qwedsacf",
+            "aime",
+            "gpqa",
+            "gpqa_diamond",
+            "gpqa_extended",
+            "gpqa_main",
+            "medmcqa",
+            "combined",
+        ],
         help="Dataset to use",
     )
     parser.add_argument(
@@ -166,9 +175,14 @@ def main():
         exp_config = load_config(args.experiment)
         config = merge_configs(config, exp_config)
 
+    # Apply profile override if present
+    config = apply_profile(config, args.profile)
+
     # Override with command line arguments
     if args.algorithm:
         config["policy_optimization"]["algorithm"] = args.algorithm
+    if args.dataset:
+        config["training"]["dataset"] = args.dataset
     if args.num_epochs:
         config["training"]["num_epochs"] = args.num_epochs
     if args.batch_size:
@@ -198,14 +212,22 @@ def main():
         if "m4" in config["models"]:
             model_configs.append(config["models"]["m4"])
     else:
-        # Default: use first two available models
-        available = config["models"]["available"]
-        model_names = list(available.keys())[:2]
-        model_configs = [
-            {"name": available[m]["name"]} for m in model_names
-        ]
-
-    logger.info(f"Models: {[m['name'] for m in model_configs]}")
+        active_models = config.get("models", {}).get("active")
+        if isinstance(active_models, str):
+            active_models = [active_models]
+        if active_models:
+            available = config["models"]["available"]
+            missing = [mid for mid in active_models if mid not in available]
+            if missing:
+                raise ValueError(f"Unknown model id(s) in models.active: {missing}")
+            model_configs = [{"name": available[mid]["name"]} for mid in active_models]
+        else:
+            # Default: use first two available models
+            available = config["models"]["available"]
+            model_names = list(available.keys())[:2]
+            model_configs = [
+                {"name": available[m]["name"]} for m in model_names
+            ]
 
     # Setup output directory
     if args.output_dir:
@@ -216,7 +238,18 @@ def main():
         output_dir = f"outputs/{exp_name}_{timestamp}"
 
     os.makedirs(output_dir, exist_ok=True)
+
+    # Setup logging (train_logs/<experiment_name>)
+    experiment_name = Path(output_dir).name
+    log_root = Path(config.get("project", {}).get("log_dir", "./train_logs"))
+    log_dir = log_root / experiment_name
+    setup_logging(log_dir=str(log_dir), name="")
+
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Log directory: {log_dir}")
+    if config.get("profile"):
+        logger.info(f"Profile: {config['profile']}")
+    logger.info(f"Models: {[m['name'] for m in model_configs]}")
 
     # Save config
     config_save_path = os.path.join(output_dir, "config.yaml")
@@ -229,9 +262,10 @@ def main():
         setup_wandb(config, experiment_name)
 
     # Create dataloaders
-    logger.info(f"Loading dataset: {args.dataset}")
+    dataset_name = config["training"]["dataset"]
+    logger.info(f"Loading dataset: {dataset_name}")
     train_loader, val_loader, test_loader = create_dataloaders(
-        config, dataset_name=args.dataset
+        config, dataset_name=dataset_name
     )
 
     # Initialize trainer
