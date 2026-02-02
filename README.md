@@ -118,8 +118,3 @@ rewards:
 
 - `main`: stable baseline (legacy XML prompt schema, `<result>` outcomes).
 - `feature/strategy-outcome-prompts`: new multi-strategy prompt templates, `<strategy_id_outcome>` tags, strategy-level exploration, and extended reward controls.
-
-## Notes
-
-- GPQA is gated on Hugging Face. Run `huggingface-cli login` and request access before training/evaluating.
-- Use `prompting.dataset_prompt_source: legacy_xml` and `prompting.strategy_outcome_tag: result` if you need backward compatibility with older checkpoints.
