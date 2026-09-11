@@ -1,0 +1,11 @@
+# Reference trainer only. Install a PyTorch build appropriate for your CUDA stack.
+# These are compatibility ranges, not a lockfile or the authors' original environment.
+numpy>=1.26,<3
+torch>=2.6,<3
+transformers>=5.0,<6
+peft>=0.15,<1
+accelerate>=1.2,<2
+sentence-transformers>=3.4,<6
+safetensors>=0.5,<1
+sentencepiece>=0.2,<1
+mistral-common>=1.8.6,<2

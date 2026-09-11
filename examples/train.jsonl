@@ -1,0 +1,4 @@
+{"id": "synthetic-train-1", "question": "What is 2 + 2?", "answer": "4"}
+{"id": "synthetic-train-2", "question": "A box has 3 red balls and 5 blue balls. How many balls are in the box?", "answer": "8"}
+{"id": "synthetic-train-3", "question": "Solve x + 7 = 12 for x.", "answer": "5"}
+{"id": "synthetic-train-4", "question": "Which number is even? A) 3 B) 5 C) 8 D) 9", "answer": "C"}
