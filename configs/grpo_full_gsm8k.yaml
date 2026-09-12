@@ -1,0 +1,156 @@
+# Full GRPO Training on GSM8K (~7500 samples)
+# =============================================
+# Optimized for 2x A6000 GPUs (48GB each)
+
+project:
+  name: "collab_reasoning_grpo"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations - same as base_config
+models:
+  available:
+    qwen2_5_3b:
+      name: "Qwen/Qwen2.5-3B-Instruct"
+      type: "qwen"
+      size: "3B"
+    qwen3_4b:
+      name: "Qwen/Qwen3-4B-Instruct-2507"
+      type: "qwen"
+      size: "4B"
+    llama3_2_3b:
+      name: "meta-llama/Llama-3.2-3B-Instruct"
+      type: "llama"
+      size: "3B"
+
+training:
+  # Full GSM8K dataset - use all train samples
+  dataset: "gsm8k"
+  num_samples: -1     # Use all available samples
+  train_split: 1.0    # Use full train dataset (~7473 samples)
+  val_split: 0.0      # No validation split
+  test_split: 0.0     # No test split (use official test set separately)
+
+  # Training epochs
+  num_epochs: 2
+
+  # Batch settings - optimized for memory
+  batch_size: 2
+  gradient_accumulation_steps: 4  # Effective batch size = 8
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # LoRA settings
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 500
+  eval_steps: 250
+  logging_steps: 5
+
+# GRPO algorithm configuration
+policy_optimization:
+  algorithm: "grpo"
+
+  # Importance sampling at token level for GRPO
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 2        # Cold generation traces
+  K_prime: 1  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # GRPO clipping (standard epsilon)
+  epsilon: 0.2
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1 (explore more)
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2 (exploit more)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+# Collaboration settings
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+# Distance/Similarity metrics
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+# Generation settings
+generation:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting - standard prompts (not multi-strategy)
+prompting:
+  multi_strategy: false
+
+# Counterfactual regularization
+counterfactual:
+  enabled: false  # Disabled for faster training
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 8
+  generate_traces_for_eval: true

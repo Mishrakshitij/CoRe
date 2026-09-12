@@ -1,0 +1,67 @@
+{
+  "models": [
+    {
+      "model_id": "M1",
+      "model_name": "Qwen/Qwen2.5-3B-Instruct",
+      "device": "cuda:0"
+    },
+    {
+      "model_id": "M2",
+      "model_name": "Qwen/Qwen3-4B-Instruct-2507",
+      "device": "cuda:1"
+    }
+  ],
+  "seed": 42,
+  "epochs": 2,
+  "batch_size": 4,
+  "learning_rate": 0.00001,
+  "weight_decay": 0.01,
+  "warmup_ratio": 0.1,
+  "max_grad_norm": 1.0,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.0,
+  "dtype": "bfloat16",
+  "gradient_checkpointing": true,
+  "cold_samples": 2,
+  "context_samples": 1,
+  "hint_probability": 0.75,
+  "hint_tokens": 1536,
+  "max_prompt_tokens": 4096,
+  "max_new_tokens": 3072,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "round_b_weight": 0.8,
+  "algorithm": "grpo",
+  "likelihood_mode": "raw_policy_surrogate",
+  "clip_epsilon": 0.2,
+  "clip_epsilon_high": 0.2,
+  "kl_beta": 0.04,
+  "policy_updates_per_batch": 1,
+  "teacher_score": "reward",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_device": "cpu",
+  "partial_credit": "token_f1",
+  "reward": {
+    "alpha": 0.3,
+    "w_exploit": 1.0,
+    "w_explore": 0.2,
+    "rescue_bonus": 0.15,
+    "trace_accuracy_weight": 0.2,
+    "cross_model_weight": 0.0,
+    "explore_margin": 0.15,
+    "explore_set_cap": 10,
+    "cross_margin": 0.15,
+    "quality_threshold": 0.1,
+    "embedding_weight": 0.6,
+    "structural_weight": 0.4,
+    "normalization_epsilon": 1e-8
+  },
+  "reward_overrides_by_epoch": [
+    {"w_explore": 0.2, "cross_model_weight": 0.0},
+    {"w_explore": 0.05, "cross_model_weight": 0.1}
+  ],
+  "output_dir": "outputs/core-qwen-paper",
+  "save_every_steps": 100,
+  "log_rollouts": false
+}

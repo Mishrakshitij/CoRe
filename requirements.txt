@@ -1,0 +1,49 @@
+# Core dependencies
+torch>=2.0.0
+transformers>=4.40.0
+accelerate>=0.27.0
+peft>=0.10.0
+datasets>=2.18.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+
+# For GSPO/SAPO (optional - use ms-swift)
+# ms-swift>=3.11.0
+
+# Sentence embeddings for diversity metrics
+sentence-transformers>=2.5.0
+
+# Training utilities
+tqdm>=4.65.0
+wandb>=0.16.0
+tensorboard>=2.15.0
+
+# Configuration
+pyyaml>=6.0
+omegaconf>=2.3.0
+
+# Numerical
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Evaluation
+evaluate>=0.4.0
+rouge-score>=0.1.2
+
+# Logging
+loguru>=0.7.0
+
+# Development
+pytest>=7.4.0
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+
+# Optional: Flash attention for faster training
+# flash-attn>=2.5.0  # Requires CUDA
+
+# DeepSpeed for multi-GPU training
+deepspeed>=0.12.0
+
+# Optional: bitsandbytes for quantization
+# bitsandbytes>=0.41.0

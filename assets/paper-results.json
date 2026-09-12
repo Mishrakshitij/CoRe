@@ -1,0 +1,28 @@
+{
+  "source": "https://arxiv.org/html/2601.21600v2",
+  "source_tables": [1, 2],
+  "status": "Published paper results, not measurements produced by this repository update",
+  "metric": "Oracle Team Pass@2 (%)",
+  "samples_per_model": 2,
+  "models_per_team": 2,
+  "candidates_per_problem": 4,
+  "datasets": ["GSM8K", "MATH", "AIME", "GPQA"],
+  "pairs": [
+    {
+      "label": "Qwen instruct pair",
+      "models": ["Qwen2.5-3B-Instruct", "Qwen3-4B-Instruct"],
+      "source_table": 1,
+      "base": [60.05, 41.95, 9.20, 7.10],
+      "sd_e2": [87.20, 63.10, 17.90, 11.95],
+      "core": [99.54, 80.80, 20.45, 17.80]
+    },
+    {
+      "label": "Reasoning pair",
+      "models": ["Phi-4-mini-reasoning", "Ministral-3-3B-Reasoning"],
+      "source_table": 2,
+      "base": [80.20, 70.70, 17.92, 14.03],
+      "sd_e2": [85.50, 77.70, 60.19, 55.26],
+      "core": [96.72, 92.08, 79.65, 77.34]
+    }
+  ]
+}

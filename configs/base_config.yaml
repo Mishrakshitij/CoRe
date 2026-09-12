@@ -1,0 +1,403 @@
+# Base Configuration for Collaborative Reasoning with GRPO/GSPO/SAPO
+# =====================================================================
+
+project:
+  name: "collab_reasoning"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./train_logs"
+  cache_dir: "./cache"
+
+# Model configurations
+models:
+  available:
+    qwen2_5_3b:
+      name: "Qwen/Qwen2.5-3B-Instruct"
+      type: "qwen"
+      size: "3B"
+    qwen3_4b:
+      name: "Qwen/Qwen3-4B-Instruct-2507"
+      type: "qwen"
+      size: "4B"
+    llama3_2_3b:
+      name: "meta-llama/Llama-3.2-3B-Instruct"
+      type: "llama"
+      size: "3B"
+    ministral_3b:
+      name: "ministral/Ministral-3b-instruct"
+      type: "mistral"
+      size: "3B"
+    # Mistral-3 Reasoning Models (require transformers>=5.0.0)
+    ministral_3b_reasoning:
+      name: "mistralai/Ministral-3-3B-Reasoning-2512"
+      type: "mistral3"
+      size: "3B"
+    ministral_8b_reasoning:
+      name: "mistralai/Ministral-3-8B-Reasoning-2512"
+      type: "mistral3"
+      size: "8B"
+    phi4_mini_reasoning:
+      name: "microsoft/Phi-4-mini-reasoning"
+      type: "phi4"
+      size: "3B"
+    phi4_reasoning:
+      name: "microsoft/Phi-4-reasoning"
+      type: "phi"
+      size: "14B"
+  # Optional explicit selection for fast training (defaults to first two available)
+  active: ["qwen2_5_3b", "qwen3_4b"]
+
+# Default training configuration
+training:
+  # Data
+  dataset: "gsm8k"  # gsm8k, math, math_qwedsacf, aime, gpqa_main, medmcqa
+  num_samples: 7500
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+  # Epochs
+  num_epochs: 2
+
+  # Batch settings
+  batch_size: 2
+  gradient_accumulation_steps: 4
+
+  # Optional GPU placement
+  model_gpu_mapping: {}
+
+  # Quantization (optional)
+  use_qlora: false
+  qlora_bits: 4
+  max_memory_per_gpu: null
+
+  # Optimizer
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # LoRA settings
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 500
+  eval_steps: 250
+  logging_steps: 50
+
+# GRPO/GSPO/SAPO specific settings
+policy_optimization:
+  # Algorithm selection: grpo, gspo, sapo, gspo_sapo_hybrid
+  algorithm: "grpo"
+
+  # Importance sampling level: token, sequence, sequence_token
+  importance_sampling_level: "token"
+
+  # Loss type: grpo, bnpo, dr_grpo
+  loss_type: "grpo"
+
+  # Number of traces per question
+  K: 2  # Cold generation traces
+  K_prime: 1  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # Clipping (GRPO/GSPO)
+  epsilon: 0.2
+  epsilon_high: 0.2
+
+  # SAPO temperatures
+  tau_pos: 1.0
+  tau_neg: 1.05
+  tau_rescue: 0.8  # Lower tau for rescued traces
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+  w_correctness_e1: 1.0
+
+  # Weights - Epoch 2 (annealed)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+  w_correctness_e2: 1.0
+
+  # Answer sources
+  exploit_answer_source: "strategy_outcome"
+  correctness_answer_source: "final_answer"
+  strategy_outcome_tag: "strategy_id_outcome"
+  explore_scope: "strategies"
+
+  # Correctness + exact match
+  use_correctness_reward: true
+  use_exact_match_reward: true
+  w_exact_match: 0.1
+  exact_match_case_sensitive: false
+
+  # Format adherence
+  use_format_reward: true
+  w_format: 0.1
+  format_reward_per_strategy: 0.2
+  format_reward_final_answer_bonus: 0.5
+  format_reward_max: 1.0
+
+  # Length shaping
+  use_length_reward: true
+  w_length: 0.05
+  length_min_tokens: 128
+  length_max_tokens: 1024
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15  # Margin for DPP-lite
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+  # Optional think and trace-accuracy rewards
+  use_think_reward: true
+  w_think: 0.1
+  embedding_device: null
+  use_trace_acc_reward: true
+  w_trace_acc: 0.2
+  trace_acc_apply_to: "correct"
+  trace_acc_source: "correctness"
+
+# Collaboration settings
+collaboration:
+  # Number of models (2 for pairwise, 3-4 for multi)
+  num_models: 2
+
+  # Hint dropout probability
+  p_hint: 0.5
+
+  # Context compression
+  max_context_tokens: 120
+  include_answer_in_context: false
+
+  # Hint handling
+  use_full_trace_hint: false
+  strip_answer_from_hint: true
+  use_correct_strategy_hint: true
+  truncate_hint_to_fit: true
+  hint_truncation_side: "left"
+  hint_prefix: "A peer model solved this correctly. Use its reasoning as guidance and follow a similar approach."
+
+  # Buddy buffer
+  max_buffer_size: 1000
+  enable_distillation: false
+  distillation_batch_size: 8
+  distillation_frequency: 50  # Every N steps
+
+  # Micro-round settings
+  micro_round_b_exploit_boost: 0.95  # Higher exploitation in round B
+
+# Distance/Similarity metrics
+distance:
+  # Type: embedding, structural, ngram, hybrid
+  type: "hybrid"
+
+  # Embedding model for semantic similarity
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_device: null
+
+  # Structural extraction
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+
+  # N-gram settings
+  ngram_n: 3
+
+# Generation settings
+generation:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting settings
+prompting:
+  # Enable multi-strategy exploration format
+  multi_strategy: true
+  template_type: "auto"
+  context_template: "auto"
+  dataset_prompt_source: "template"
+  strategy_outcome_tag: "strategy_id_outcome"
+
+  # Multi-strategy reward weights (only used when multi_strategy=true)
+  ms_w_correct: 2.0      # Correctness weight
+  ms_w_diversity: 0.5    # Semantic diversity weight
+  ms_w_consistency: 1.5  # Outcome consistency weight
+  ms_w_format: 0.3       # Format adherence weight
+
+  # Diversity threshold for counting unique strategies
+  diversity_threshold: 0.8
+
+# Counterfactual regularization
+counterfactual:
+  enabled: true
+  probability: 0.2
+  lambda_cf: 0.3
+  perturbation_types: ["numeric", "condition"]
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 8
+  generate_traces_for_eval: true
+
+# Fast-training specific settings
+fast_training:
+  gen_batch_size: 2
+  prompt_max_length: 1024
+  logprob_max_length: 2048
+  log_round_rewards: false
+  log_round_reward_components: false
+  log_hint_stats: false
+
+# Optional profile overrides for common runs (use --profile or set profile: <name>)
+profiles:
+  phi4mini_ministral3b_gpqa_main:
+    project:
+      name: "phi4mini-ministral3b-gpqa-main"
+    models:
+      active: ["phi4_mini_reasoning", "ministral_3b_reasoning"]
+    training:
+      dataset: "gpqa_main"
+      num_samples: -1
+      train_split: 1.0
+      val_split: 0.0
+      test_split: 0.0
+      num_epochs: 1
+      batch_size: 2
+      gradient_accumulation_steps: 8
+      model_gpu_mapping:
+        M1: [0, 1]
+        M2: [2, 3]
+      learning_rate: 5.0e-6
+      save_steps: 25
+      eval_steps: 25
+      logging_steps: 5
+    generation:
+      max_new_tokens: 2048
+    fast_training:
+      gen_batch_size: 2
+      prompt_max_length: 1024
+      logprob_max_length: 2048
+      log_round_rewards: true
+      log_round_reward_components: true
+      log_hint_stats: true
+    rewards:
+      embedding_device: "cuda:3"
+    distance:
+      embedding_device: "cuda:3"
+    collaboration:
+      p_hint: 1.0
+      max_context_tokens: 1024
+      use_full_trace_hint: true
+
+  phi4mini_ministral3b_aime:
+    project:
+      name: "phi4mini-ministral3b-aime"
+    models:
+      active: ["phi4_mini_reasoning", "ministral_3b_reasoning"]
+    training:
+      dataset: "aime"
+      num_samples: -1
+      train_split: 1.0
+      val_split: 0.0
+      test_split: 0.0
+      num_epochs: 1
+      batch_size: 2
+      gradient_accumulation_steps: 8
+      model_gpu_mapping:
+        M1: [0, 1]
+        M2: [2, 3]
+      learning_rate: 5.0e-6
+      save_steps: 25
+      eval_steps: 25
+      logging_steps: 5
+    generation:
+      max_new_tokens: 2048
+    fast_training:
+      gen_batch_size: 2
+      prompt_max_length: 1024
+      logprob_max_length: 2048
+      log_round_rewards: true
+      log_round_reward_components: true
+      log_hint_stats: true
+    rewards:
+      embedding_device: "cuda:3"
+    distance:
+      embedding_device: "cuda:3"
+    collaboration:
+      p_hint: 1.0
+      max_context_tokens: 1024
+      use_full_trace_hint: true
+
+  phi4mini_ministral3b_math_qwedsacf:
+    project:
+      name: "phi4mini-ministral3b-math-qwedsacf"
+    models:
+      active: ["phi4_mini_reasoning", "ministral_3b_reasoning"]
+    training:
+      dataset: "math_qwedsacf"
+      num_samples: -1
+      train_split: 1.0
+      val_split: 0.0
+      test_split: 0.0
+      num_epochs: 1
+      batch_size: 2
+      gradient_accumulation_steps: 8
+      model_gpu_mapping:
+        M1: [0, 1]
+        M2: [2, 3]
+      learning_rate: 5.0e-6
+      save_steps: 25
+      eval_steps: 25
+      logging_steps: 5
+    generation:
+      max_new_tokens: 2048
+    fast_training:
+      gen_batch_size: 2
+      prompt_max_length: 1024
+      logprob_max_length: 2048
+      log_round_rewards: true
+      log_round_reward_components: true
+      log_hint_stats: true
+    rewards:
+      embedding_device: "cuda:3"
+    distance:
+      embedding_device: "cuda:3"
+    collaboration:
+      p_hint: 1.0
+      max_context_tokens: 1024
+      use_full_trace_hint: true

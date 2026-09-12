@@ -1,0 +1,50 @@
+# Test Configuration for Multi-Strategy Prompting with 20 GSM8K samples
+# Memory-optimized: batch_size=1
+
+training:
+  dataset: "gsm8k"
+  num_samples: 20
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  num_epochs: 1
+  batch_size: 1  # Reduced from 2 to avoid OOM in log_softmax
+  gradient_accumulation_steps: 2
+  learning_rate: 1.0e-5
+  logging_steps: 1
+  eval_steps: 16
+  save_steps: 100
+
+policy_optimization:
+  algorithm: "sapo"
+  importance_sampling_level: "token"
+  K: 2
+  K_prime: 1
+  tau_pos: 1.0
+  tau_neg: 1.05
+  tau_rescue: 0.8
+  beta: 0.04
+
+rewards:
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 150
+
+prompting:
+  multi_strategy: true
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+generation:
+  max_new_tokens: 512  # Keep full length for multi-strategy
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true

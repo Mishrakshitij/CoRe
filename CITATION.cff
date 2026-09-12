@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the CoRe paper."
+type: software
+title: "CORE: Collaborative Reasoning via Cross Teaching"
+authors:
+  - family-names: Mishra
+    given-names: Kshitij
+  - family-names: Aubakirov
+    given-names: Mirat
+  - family-names: Takac
+    given-names: Martin
+  - family-names: Lukas
+    given-names: Nils
+  - family-names: Lahlou
+    given-names: Salem
+repository-code: "https://github.com/Mishrakshitij/CoRe"
+preferred-citation:
+  type: article
+  title: "CORE: Collaborative Reasoning via Cross Teaching"
+  authors:
+    - family-names: Mishra
+      given-names: Kshitij
+    - family-names: Aubakirov
+      given-names: Mirat
+    - family-names: Takac
+      given-names: Martin
+    - family-names: Lukas
+      given-names: Nils
+    - family-names: Lahlou
+      given-names: Salem
+  year: 2026
+  journal: arXiv
+  doi: "10.48550/arXiv.2601.21600"
+  url: "https://arxiv.org/abs/2601.21600v2"

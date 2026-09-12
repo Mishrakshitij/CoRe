@@ -1,0 +1,199 @@
+# GRPO Training: Phi-4-reasoning-plus + Ministral-14B on GPQA with QLoRA
+# ========================================================================
+# Two 14B reasoning models trained collaboratively using 4-bit quantization
+# M1 (Phi-4-reasoning-plus) on GPUs 0-1, M2 (Ministral-3-14B-Reasoning) on GPUs 2-3
+#
+# Memory Optimization:
+#   - QLoRA with 4-bit NF4 quantization (~7GB per 14B model)
+#   - device_map="auto" with max_memory constraint
+#   - LoRA rank=32 for larger capacity
+#   - Gradient checkpointing enabled
+#
+# Expected GPU Memory:
+#   - ~18-22GB per GPU with batch_size=1
+#   - ~30-35GB per GPU with batch_size=2 (tight on 40GB)
+
+project:
+  name: "phi4-ministral14b-gpqa-qlora-v1"
+  seed: 42
+  output_dir: "./outputs/phi4-ministral14b-gpqa"
+  log_dir: "./logs"
+  cache_dir: "./cache"
+
+# Model configurations with per-model generation settings
+models:
+  available:
+    phi4_reasoning_plus:
+      name: "microsoft/Phi-4-reasoning-plus"
+      type: "phi4"
+      size: "14B"
+      # Per-model generation config (Phi-4 recommended settings)
+      generation:
+        temperature: 0.8
+        top_k: 50
+        top_p: 0.95
+    ministral_14b_reasoning:
+      name: "mistralai/Ministral-3-14B-Reasoning-2512"
+      type: "mistral3"
+      size: "14B"
+      # Per-model generation config (Mistral recommended settings)
+      generation:
+        temperature: 0.7
+        top_p: 0.9
+
+training:
+  # GPQA main dataset
+  dataset: "gpqa_main"
+  num_samples: -1     # Use all available
+  train_split: 1.0
+  val_split: 0.0
+  test_split: 0.0
+
+  # Training epochs
+  num_epochs: 5
+
+  # Batch settings - start conservative for 14B models
+  batch_size: 1       # Start with 1, increase to 2 if memory allows
+  gradient_accumulation_steps: 8  # Effective batch size = 8
+
+  # GPU assignment for 4-GPU setup
+  model_gpu_mapping:
+    M1: [0, 1]    # Phi-4-reasoning-plus on GPUs 0-1
+    M2: [2, 3]    # Ministral-14B-Reasoning on GPUs 2-3
+
+  # QLoRA settings (critical for 14B models on 40GB GPUs)
+  use_qlora: true
+  qlora_bits: 4           # 4-bit quantization (can try 8 for better quality)
+  max_memory_per_gpu: "38GB"  # Leave headroom for KV cache and activations
+
+  # LoRA settings - larger rank for bigger models
+  use_lora: true
+  lora_r: 32              # Higher rank for 14B models
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+  # Optimizer
+  learning_rate: 5.0e-6   # Lower LR for larger models
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler: "cosine"
+
+  # Mixed precision
+  bf16: true
+  fp16: false
+
+  # Gradient settings
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  save_steps: 25
+  eval_steps: 25
+  logging_steps: 5
+
+# GRPO algorithm configuration
+policy_optimization:
+  algorithm: "grpo"
+  importance_sampling_level: "token"
+  loss_type: "grpo"
+
+  # Number of traces per question (reduced for memory)
+  K: 2        # Cold generation traces
+  K_prime: 1  # Contexted generation traces
+
+  # KL regularization
+  beta: 0.04
+
+  # GRPO clipping
+  epsilon: 0.2
+
+  # Off-policy settings
+  steps_per_generation: 4
+  num_iterations: 1
+
+# Reward configuration
+rewards:
+  # Weights - Epoch 1 (explore more)
+  w_exploit_e1: 1.0
+  w_explore_e1: 0.2
+  w_cross_e1: 0.0
+
+  # Weights - Epoch 2+ (exploit more)
+  w_exploit_e2: 1.0
+  w_explore_e2: 0.05
+  w_cross_e2: 0.1
+
+  # Partial credit
+  alpha: 0.3
+  partial_thresh: 0.5
+
+  # Exploration diversity
+  delta: 0.15
+
+  # Cross-model complementarity
+  eta: 0.1
+
+  # Rescue bonus
+  r_teach: 0.15
+
+  # Think reward for reasoning models
+  use_think_reward: true  # Enable for both Phi-4 and Mistral reasoning
+  w_think: 0.1
+
+  # Embedding model device control (put on GPU 3 to balance load)
+  embedding_device: "cuda:3"
+
+# Collaboration settings
+collaboration:
+  num_models: 2
+  p_hint: 0.5
+  max_context_tokens: 120
+  include_answer_in_context: false
+  max_buffer_size: 1000
+  enable_distillation: false   # Disabled - GRPO + rescue bonus already learns from hints
+  distillation_batch_size: 8
+  distillation_frequency: 50
+  micro_round_b_exploit_boost: 0.95
+
+# Distance/Similarity metrics
+distance:
+  type: "hybrid"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_device: "cuda:3"  # Put embedding model on GPU 3
+  extract_operations: true
+  operation_weight: 0.4
+  embedding_weight: 0.6
+  ngram_n: 3
+
+# Generation settings - extended for reasoning models
+generation:
+  max_new_tokens: 4096    # Extended for deep reasoning
+  temperature: 0.7        # Global default (overridden by per-model config)
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  num_return_sequences: 1
+
+# Prompting - auto-detect template based on model
+prompting:
+  multi_strategy: true
+  template_type: "auto"   # Auto-detect: phi-chat for Phi-4, mistral-chat for Mistral
+  ms_w_correct: 2.0
+  ms_w_diversity: 0.5
+  ms_w_consistency: 1.5
+  ms_w_format: 0.3
+  diversity_threshold: 0.8
+
+# Counterfactual regularization
+counterfactual:
+  enabled: false  # Disabled for faster training
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "rescue_rate", "diversity", "trace_quality"]
+  eval_batch_size: 4
+  generate_traces_for_eval: true
+
+# Fast training settings
+fast_training:
+  gen_batch_size: 1  # Conservative for 14B models

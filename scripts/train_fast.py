@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""
+Fast Training Script
+====================
+
+Uses batched generation and torch.compile for faster training.
+Expected speedup: 3-5x compared to standard training.
+
+Usage:
+    python scripts/train_fast.py --config configs/grpo_fast_1000.yaml
+    python scripts/train_fast.py --config configs/grpo_fast_1000.yaml --algorithm grpo --num-samples 1000
+"""
+
+import os
+import sys
+import argparse
+import logging
+from pathlib import Path
+from datetime import datetime
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+import yaml
+import torch
+import wandb
+from src.trainers import FastCollaborativeTrainer
+from src.data import create_dataloaders
+from src.utils import setup_logging, apply_profile
+
+logger = logging.getLogger(__name__)
+
+
+def load_config(config_path: str) -> dict:
+    """Load YAML configuration file."""
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def setup_wandb(config: dict, experiment_name: str):
+    """Initialize Weights & Biases logging."""
+    wandb.init(
+        project=config["project"]["name"],
+        name=experiment_name,
+        config=config,
+        tags=["fast-training", config["policy_optimization"]["algorithm"]],
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Fast collaborative training")
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/grpo_fast_1000.yaml",
+        help="Path to configuration file",
+    )
+    parser.add_argument(
+        "--algorithm",
+        type=str,
+        default=None,
+        choices=["grpo", "gspo", "sapo", "hybrid"],
+        help="Override algorithm from config",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Override dataset from config",
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="Config profile to apply (overrides config 'profile')",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=None,
+        help="Override number of training samples",
+    )
+    parser.add_argument(
+        "--use-wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging",
+    )
+    parser.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="Disable torch.compile (useful for debugging)",
+    )
+    parser.add_argument(
+        "--gen-batch-size",
+        type=int,
+        default=4,
+        help="Batch size for generation (larger = faster but more memory)",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint directory to resume training from",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Override output directory (no automatic experiment subdir)",
+    )
+    parser.add_argument(
+        "--prompt-template",
+        type=str,
+        default="standard",
+        choices=["standard", "mistral-chat", "phi-chat", "auto"],
+        help="Prompt template type: standard (raw prompts), mistral-chat (Mistral-3), phi-chat (Phi-4), or auto (detect from model name)",
+    )
+    parser.add_argument(
+        "--context-template",
+        type=str,
+        default=None,
+        choices=["standard", "chat", "auto"],
+        help="Contexted prompt template for rescue generation: standard (plain), chat (use model chat template), or auto (chat for Mistral/Phi)",
+    )
+    parser.add_argument(
+        "--think-reward",
+        action="store_true",
+        help="Enable [THINK] content diversity reward for Mistral reasoning models",
+    )
+    parser.add_argument(
+        "--trace-acc-reward",
+        action="store_true",
+        help="Enable trace-accuracy reward (fraction of correct traces per question)",
+    )
+    parser.add_argument(
+        "--trace-acc-weight",
+        type=float,
+        default=None,
+        help="Weight for trace-accuracy reward",
+    )
+    parser.add_argument(
+        "--trace-acc-apply-to",
+        type=str,
+        default=None,
+        choices=["all", "correct"],
+        help="Apply trace-accuracy reward to all traces or only correct traces",
+    )
+    parser.add_argument(
+        "--log-round-rewards",
+        action="store_true",
+        help="Log Round A and Round B reward stats during training",
+    )
+    parser.add_argument(
+        "--log-reward-components",
+        action="store_true",
+        help="Log per-trace reward component details during training",
+    )
+    parser.add_argument(
+        "--cross-reward-scope",
+        type=str,
+        default=None,
+        choices=["none", "round_a", "round_b", "both"],
+        help="Enable cross reward using partner traces in selected rounds",
+    )
+    parser.add_argument(
+        "--cross-reward-partner",
+        type=str,
+        default=None,
+        choices=["all", "correct", "best"],
+        help="Partner trace selection for cross reward",
+    )
+
+    args = parser.parse_args()
+
+    # Load config
+    config = load_config(args.config)
+    config = apply_profile(config, args.profile)
+
+    # Override config with command line args
+    if args.algorithm:
+        config["policy_optimization"]["algorithm"] = args.algorithm
+    if args.dataset:
+        config["training"]["dataset"] = args.dataset
+    if args.num_samples:
+        config["training"]["num_samples"] = args.num_samples
+
+    # Add fast training config
+    if "fast_training" not in config:
+        config["fast_training"] = {}
+    config["fast_training"]["gen_batch_size"] = args.gen_batch_size
+    config["fast_training"]["use_compile"] = not args.no_compile
+    config["fast_training"]["log_round_rewards"] = args.log_round_rewards
+    config["fast_training"]["log_round_reward_components"] = args.log_reward_components
+
+    # Add prompt template config
+    if "prompting" not in config:
+        config["prompting"] = {}
+    config["prompting"]["template_type"] = args.prompt_template
+    if args.context_template:
+        config["prompting"]["context_template"] = args.context_template
+
+    # Add think reward config
+    if "rewards" not in config:
+        config["rewards"] = {}
+    config["rewards"]["use_think_reward"] = args.think_reward
+    if args.trace_acc_reward:
+        config["rewards"]["use_trace_acc_reward"] = True
+    if args.trace_acc_weight is not None:
+        config["rewards"]["w_trace_acc"] = args.trace_acc_weight
+    if args.trace_acc_apply_to:
+        config["rewards"]["trace_acc_apply_to"] = args.trace_acc_apply_to
+
+    # Cross reward config
+    if "collaboration" not in config:
+        config["collaboration"] = {}
+    if args.cross_reward_scope:
+        config["collaboration"]["cross_reward_scope"] = args.cross_reward_scope
+    if args.cross_reward_partner:
+        config["collaboration"]["cross_reward_partner"] = args.cross_reward_partner
+
+    # Create experiment name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    algorithm = config["policy_optimization"]["algorithm"]
+    num_samples = config["training"]["num_samples"]
+    experiment_name = f"fast_{algorithm}_{num_samples}samples_{timestamp}"
+
+    # Setup output directory (use checkpoint parent if resuming)
+    if args.resume:
+        output_dir = Path(args.resume).parent
+        logger.info(f"Resuming from checkpoint: {args.resume}")
+    elif args.output_dir:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        experiment_name = output_dir.name
+    else:
+        output_dir = Path(config["project"]["output_dir"]) / experiment_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Setup logging (train_logs/<experiment_name>)
+    log_root = Path(config.get("project", {}).get("log_dir", "./train_logs"))
+    log_dir = log_root / experiment_name
+    setup_logging(log_dir=str(log_dir), name="")
+
+    logger.info(f"Loading config from {args.config}")
+
+    # Save config
+    with open(output_dir / "config.yaml", "w") as f:
+        yaml.dump(config, f)
+
+    logger.info(f"Experiment: {experiment_name}")
+    logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Log directory: {log_dir}")
+    if config.get("profile"):
+        logger.info(f"Profile: {config['profile']}")
+    logger.info(f"Algorithm: {algorithm}")
+    logger.info(f"Dataset: {config['training']['dataset']}")
+    logger.info(f"Num samples: {num_samples}")
+    logger.info(f"Generation batch size: {args.gen_batch_size}")
+    logger.info(f"torch.compile enabled: {not args.no_compile}")
+    logger.info(f"Prompt template: {args.prompt_template}")
+    logger.info(f"Context template: {config['prompting'].get('context_template', 'standard')}")
+    logger.info(f"Think reward enabled: {args.think_reward}")
+    logger.info(f"Log round rewards: {args.log_round_rewards}")
+    logger.info(f"Log reward components: {args.log_reward_components}")
+    logger.info(
+        f"Cross reward scope: {config['collaboration'].get('cross_reward_scope', 'none')}, "
+        f"partner: {config['collaboration'].get('cross_reward_partner', 'all')}"
+    )
+    logger.info(f"Prompt max length: {config.get('fast_training', {}).get('prompt_max_length', 1024)}")
+    logger.info(f"Logprob max length: {config.get('fast_training', {}).get('logprob_max_length', 2048)}")
+    logger.info(
+        f"Trace-acc reward: {config['rewards'].get('use_trace_acc_reward', False)} "
+        f"(w={config['rewards'].get('w_trace_acc', 0.0)}, "
+        f"apply_to={config['rewards'].get('trace_acc_apply_to', 'all')})"
+    )
+
+    # Setup wandb
+    if args.use_wandb:
+        config["use_wandb"] = True
+        setup_wandb(config, experiment_name)
+
+    # Get model configs - use active list if provided, else first two available
+    active_models = config.get("models", {}).get("active")
+    if isinstance(active_models, str):
+        active_models = [active_models]
+    if active_models:
+        missing = [mid for mid in active_models if mid not in config["models"]["available"]]
+        if missing:
+            raise ValueError(f"Unknown model id(s) in models.active: {missing}")
+        model_configs = [config["models"]["available"][mid] for mid in active_models]
+    else:
+        available_models = list(config["models"]["available"].keys())
+        if len(available_models) < 2:
+            raise ValueError(f"Need at least 2 models in config, found: {available_models}")
+        model_configs = [
+            config["models"]["available"][available_models[0]],
+            config["models"]["available"][available_models[1]],
+        ]
+
+    logger.info(f"Models:")
+    for i, mc in enumerate(model_configs):
+        logger.info(f"  M{i+1}: {mc['name']}")
+
+    # Create data loaders
+    logger.info("Creating data loaders...")
+    train_dataloader, val_dataloader, test_dataloader = create_dataloaders(
+        config=config,
+        dataset_name=config["training"]["dataset"],
+    )
+
+    logger.info(f"Train samples: {len(train_dataloader.dataset)}")
+    eval_dataloader = val_dataloader if val_dataloader else None
+    if eval_dataloader:
+        logger.info(f"Eval samples: {len(eval_dataloader.dataset)}")
+
+    # Create fast trainer
+    logger.info("Initializing fast trainer...")
+    trainer = FastCollaborativeTrainer(
+        config=config,
+        model_configs=model_configs,
+        output_dir=str(output_dir),
+        use_compile=not args.no_compile,
+    )
+
+    # Load checkpoint if resuming
+    if args.resume:
+        logger.info(f"Loading checkpoint from {args.resume}")
+        trainer.load_checkpoint(args.resume)
+        logger.info(f"Resuming from epoch {trainer.state.epoch}, step {trainer.state.global_step}")
+
+    # Start training
+    logger.info("Starting fast training...")
+    trainer.train(
+        train_dataloader=train_dataloader,
+        eval_dataloader=eval_dataloader,
+    )
+
+    logger.info("Training complete!")
+
+    # Cleanup wandb
+    if args.use_wandb:
+        wandb.finish()
+
+
+if __name__ == "__main__":
+    main()
